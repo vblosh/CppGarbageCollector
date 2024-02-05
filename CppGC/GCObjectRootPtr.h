@@ -68,7 +68,6 @@ namespace cppgc
         }
     };
 
-
     template<class T>
     class GCObjectRootPtr : public GCObjectRootPtrBase
     {

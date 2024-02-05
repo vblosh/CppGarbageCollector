@@ -1,8 +1,8 @@
 #include <iostream>
+#include <gtest/gtest.h>
 
 #include "GarbageCollector.h"
 
-using namespace std;
 using namespace cppgc;
 
 class Foo : public GCObject
@@ -40,7 +40,20 @@ GCOBJECT_POINTER_MAP_BEGIN(Boo)
 GCPOINTER(Boo, pBoo)
 GCOBJECT_POINTER_MAP_WITH_PARENT_END(Boo, Foo)
 
-void simpleTest()
+TEST(GCTEST, testRoots1)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root1(gc);
+    GCObjectRootPtr<Foo> root2(gc);
+    root1 = gc.createInstance<Foo>(1);
+    root2 = gc.createInstance<Foo>(2);
+    ASSERT_EQ(2, gc.get_objects_count());
+    root1 = nullptr;
+    gc.collect();
+    ASSERT_EQ(1, gc.get_objects_count());
+}
+
+TEST(GCTEST, testCyclicRefs1)
 {
     GarbageCollector gc;
     GCObjectRootPtr<Foo> root1(gc);
@@ -49,31 +62,29 @@ void simpleTest()
     root2 = gc.createInstance<Foo>(2);
     root1->pFoo = root2.get();
     root2->pFoo = root1.get();
+    ASSERT_EQ(2, gc.get_objects_count());
     root1 = nullptr;
-    cout << gc.get_objects_count() << " objects created" << endl;
-    gc.collect();
-    cout << gc.get_objects_count() << " objects created" << endl;
     root2 = nullptr;
     gc.collect();
-    cout << gc.get_objects_count() << " objects created" << endl;
+    ASSERT_EQ(0, gc.get_objects_count());
+}
 
+TEST(GCTEST, testTree1)
+{
+    GarbageCollector gc;
     GCObjectRootPtr<Boo> root11(gc);
     root11 = gc.createInstance<Boo>(11, 'a');
     root11->pFoo = gc.createInstance<Boo>(12, 'b');
     root11->pBoo = gc.createInstance<Boo>(13, 'c');
-    cout << gc.get_objects_count() << " objects created" << endl;
+    ASSERT_EQ(3, gc.get_objects_count());
     gc.collect();
-    cout << gc.get_objects_count() << " objects created" << endl;
+    ASSERT_EQ(3, gc.get_objects_count());
     root11.reset();
     gc.collect();
-    cout << gc.get_objects_count() << " objects created" << endl;
+    ASSERT_EQ(0, gc.get_objects_count());
 }
 
-int main()
-{
-    std::cout << "Test Started\n";
-
-    simpleTest();
-
-    std::cout << "Test Ended\n";
+int main(int argc, char** argv) {
+    ::testing::InitGoogleTest(&argc, argv);
+    return RUN_ALL_TESTS();
 }
