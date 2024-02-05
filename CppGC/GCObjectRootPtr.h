@@ -6,12 +6,14 @@
 
 namespace cppgc
 {
+    using GCObjectPtr = GCObject*;
+
     class GCObjectRootPtrBase
     {
         IRootsRegistry& _rootsRegistry;
 
     protected:
-        GCObject* _pObject;
+        GCObjectPtr _pObject;
 
     public:
         GCObjectRootPtrBase(IRootsRegistry& rootsRegistry) : _rootsRegistry(rootsRegistry), _pObject(nullptr)
@@ -39,7 +41,7 @@ namespace cppgc
             return *this;
         }
 
-        GCObjectRootPtrBase& operator=(GCObject* object)
+        GCObjectRootPtrBase& operator=(GCObjectPtr object)
         {
             _pObject = object;
             return *this;
@@ -55,12 +57,12 @@ namespace cppgc
             _pObject = nullptr;
         }
 
-        GCObject* operator->()
+        GCObjectPtr operator->()
         {
             return _pObject;
         }
 
-        GCObject* get()
+        GCObjectPtr get()
         {
             return _pObject;
         }
@@ -81,7 +83,7 @@ namespace cppgc
 
         GCObjectRootPtr& operator=(T* object)
         {
-            GCObjectRootPtrBase::operator=(static_cast<GCObject*>(object));
+            GCObjectRootPtrBase::operator=(static_cast<GCObjectPtr>(object));
 
             return *this;
         }
