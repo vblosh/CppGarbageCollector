@@ -9,7 +9,6 @@
 
 namespace cppgc
 {
-//	template<typename Alloc = std::allocator<char>>
 	class GarbageCollector : public IRootsRegistry
 	{
 	public:
@@ -31,6 +30,7 @@ namespace cppgc
 		{
 			roots.insert(root);
 		}
+
 		virtual void removeRoot(GCObjectRootPtrBase* root) override
 		{
 			roots.erase(root);
@@ -39,10 +39,6 @@ namespace cppgc
 		template<class T, class... Args> 
 		T* createInstance(Args&&... args)
 		{
-			//using TAllocator = typename std::allocator_traits<Alloc>::template rebind_alloc<T>;
-			//TAllocator talloc(alloc);
-			//T* ptr = talloc.allocate(1);
-			//::new (static_cast<void*>(ptr)) T(std::forward<Args>(args)...);
 			T* ptr = ::new T(std::forward<Args>(args)...);
 			
 			allocated.push_front(ptr);
