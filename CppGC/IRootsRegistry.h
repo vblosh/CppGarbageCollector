@@ -1,4 +1,6 @@
-#pragma once
+#ifndef IROOTS_REGISTRY_H
+#define IROOTS_REGISTRY_H
+
 namespace cppgc
 {
 
@@ -13,3 +15,5 @@ namespace cppgc
     };
 
 }
+
+#endif // IROOTS_REGISTRY_H

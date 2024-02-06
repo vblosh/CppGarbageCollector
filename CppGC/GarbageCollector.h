@@ -1,4 +1,6 @@
-#pragma once
+#ifndef GARBAGE_COLLECTOR_H
+#define GARBAGE_COLLECTOR_H
+
 #include <memory>
 #include <forward_list>
 #include <set>
@@ -104,3 +106,5 @@ namespace cppgc
 	};
 
 }
+
+#endif // GARBAGE_COLLECTOR_H
