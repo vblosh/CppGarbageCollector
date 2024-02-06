@@ -1,7 +1,7 @@
-#include <iostream>
 #include <gtest/gtest.h>
 
 #include "GarbageCollector.h"
+#include "GCPerfTest.h"
 
 using namespace cppgc;
 
@@ -85,6 +85,14 @@ TEST(GCTEST, testTree1)
 }
 
 int main(int argc, char** argv) {
-    ::testing::InitGoogleTest(&argc, argv);
-    return RUN_ALL_TESTS();
+    bool unitTests = false;
+    if (unitTests)
+    {
+        ::testing::InitGoogleTest(&argc, argv);
+        return RUN_ALL_TESTS();
+    }
+    else
+    {
+        return perfomanceTest();
+    }
 }
