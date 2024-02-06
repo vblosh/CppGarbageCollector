@@ -1,4 +1,5 @@
-#pragma once
+#ifndef GCOBJECT_ROOT_PTR_H
+#define GCOBJECT_ROOT_PTR_H
 
 #include <assert.h>
 #include "IRootsRegistry.h"
@@ -99,3 +100,4 @@ namespace cppgc
     };
 }
 
+#endif // GCOBJECT_ROOT_PTR_H

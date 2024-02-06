@@ -23,19 +23,19 @@ namespace cppgc
 	/*****************************************
 		Macros for classes without GC pointers, using:
 
-	class Boo : public GCObject
+	class Parent : public GCObject
 	{
-	DECLARE_GCOBJECT_CLASS_NO_PTR(Boo)
+	DECLARE_GCOBJECT_CLASS_NO_PTR(Parent)
 	};
 
-	IMPLEMENT_GCOBJECT_CLASS_NO_PTR(Boo)
+	IMPLEMENT_GCOBJECT_CLASS_NO_PTR(Parent)
 
-	class Boo : public Parent
+	class Child : public Parent
 	{
-	DECLARE_GCOBJECT_CLASS_NO_PTR
+	DECLARE_GCOBJECT_CLASS_NO_PTR(Child)
 	};
 
-	IMPLEMENT_GCOBJECT_CLASS_NO_PTR_WITH_PARENT(Boo, Parent)
+	IMPLEMENT_GCOBJECT_CLASS_NO_PTR_WITH_PARENT(Child, Parent)
 	 *****************************************/
 
 #define DECLARE_GCOBJECT_CLASS_NO_PTR(Type) \
