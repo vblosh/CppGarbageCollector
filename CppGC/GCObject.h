@@ -25,7 +25,7 @@ namespace cppgc
 
 	class Boo : public GCObject
 	{
-	DECLARE_GCOBJECT_CLASS_NO_PTR
+	DECLARE_GCOBJECT_CLASS_NO_PTR(Boo)
 	};
 
 	IMPLEMENT_GCOBJECT_CLASS_NO_PTR(Boo)
@@ -108,6 +108,8 @@ ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets)
 
 #define GCOBJECT_POINTER_MAP_WITH_PARENT_END(Type, Parent) }; \
 ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, &Parent::classInfo }; \
+
+bool isSubclassOf(GCObject* descendant, GCObject* ancestor);
 
 }
 #endif //GUARD_GCOBJECT_H
