@@ -145,6 +145,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="CppGCTest.cpp" />
+    <ClCompile Include="GCObject.cpp" />
     <ClCompile Include="GCPerfTest.cpp" />
   </ItemGroup>
   <ItemGroup>

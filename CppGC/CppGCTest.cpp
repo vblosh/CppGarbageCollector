@@ -40,6 +40,13 @@ GCOBJECT_POINTER_MAP_BEGIN(Boo)
 GCPOINTER(Boo, pBoo)
 GCOBJECT_POINTER_MAP_WITH_PARENT_END(Boo, Foo)
 
+class NoAncestor : public GCObject
+{
+    DECLARE_GCOBJECT_CLASS_NO_PTR(NoAncestor)
+};
+
+IMPLEMENT_GCOBJECT_CLASS_NO_PTR(NoAncestor)
+
 TEST(GCTEST, testRoots1)
 {
     GarbageCollector gc;
@@ -84,8 +91,21 @@ TEST(GCTEST, testTree1)
     ASSERT_EQ(0, gc.get_objects_count());
 }
 
+TEST(GCOBJECT, isSubclassTrue)
+{
+    GarbageCollector gc;
+    ASSERT_TRUE(isSubclassOf(gc.createInstance<Foo>(1), gc.createInstance<Foo>(1)));
+    ASSERT_TRUE(isSubclassOf(gc.createInstance<Boo>(1, 'a'), gc.createInstance<Foo>(1)));
+}
+
+TEST(GCOBJECT, isSubclassFalse)
+{
+    GarbageCollector gc;
+    ASSERT_FALSE(isSubclassOf(gc.createInstance<NoAncestor>(), gc.createInstance<Foo>(1)));
+}
+
 int main(int argc, char** argv) {
-    bool unitTests = false;
+    bool unitTests = true;
     if (unitTests)
     {
         ::testing::InitGoogleTest(&argc, argv);
