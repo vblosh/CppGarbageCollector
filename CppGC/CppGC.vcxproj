@@ -145,10 +145,12 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="CppGCTest.cpp" />
+    <ClCompile Include="GCPerfTest.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GarbageCollector.h" />
     <ClInclude Include="GCObject.h" />
+    <ClInclude Include="GCPerfTest.h" />
     <ClInclude Include="IRootsRegistry.h" />
     <ClInclude Include="GCObjectRootPtr.h" />
   </ItemGroup>
