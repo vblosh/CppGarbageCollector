@@ -104,6 +104,30 @@ TEST(GCOBJECT, isSubclassFalse)
     ASSERT_FALSE(isSubclassOf(gc.createInstance<NoAncestor>(), gc.createInstance<Foo>(1)));
 }
 
+TEST(GCOBJECT, isSameTypeTrue)
+{
+    GarbageCollector gc;
+    ASSERT_TRUE(isSameType(gc.createInstance<Foo>(2), gc.createInstance<Foo>(1)));
+}
+
+TEST(GCOBJECT, isSameTypeFalse)
+{
+    GarbageCollector gc;
+    ASSERT_FALSE(isSameType(gc.createInstance<NoAncestor>(), gc.createInstance<Foo>(1)));
+}
+
+TEST(GCOBJECT, isTypeOfTrue)
+{
+    GarbageCollector gc;
+    ASSERT_TRUE(isTypeOf<Foo>(gc.createInstance<Foo>(1)));
+}
+
+TEST(GCOBJECT, isTypeOfFalse)
+{
+    GarbageCollector gc;
+    ASSERT_FALSE(isTypeOf<Boo>(gc.createInstance<Foo>(1)));
+}
+
 int main(int argc, char** argv) {
     bool unitTests = true;
     if (unitTests)

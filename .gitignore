@@ -362,3 +362,4 @@ MigrationBackup/
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
 /CppGC/My Inspector Results - CppGC
+/CppGC/.opencppcov/CppGC/Debug_x86.json

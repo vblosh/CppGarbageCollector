@@ -21,9 +21,6 @@
     <ClCompile Include="GCPerfTest.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="GCObject.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GarbageCollector.h">
