@@ -90,9 +90,11 @@ ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), 0, nullptr, &Parent::cla
 
 #define DECLARE_GCOBJECT_CLASS(Type) \
 public: \
+virtual ClassInfo* getClassInfo() override { return &classInfo; }; \
+static ClassInfo* GetClassInfo() { return &classInfo; }; \
+private: \
 static ClassInfo classInfo; \
 static size_t ptrOffsets[]; \
-virtual ClassInfo* getClassInfo() override { return &classInfo; }; \
 
 #define IMPLEMENT_GCOBJECT_CLASS(Type) \
 ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, nullptr }; \
@@ -107,9 +109,31 @@ size_t Type::ptrOffsets[] = { \
 ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, nullptr }; \
 
 #define GCOBJECT_POINTER_MAP_WITH_PARENT_END(Type, Parent) }; \
-ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, &Parent::classInfo }; \
+ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, Parent::GetClassInfo() }; \
 
-bool isSubclassOf(GCObject* descendant, GCObject* ancestor);
+inline bool isSubclassOf(GCObject* descendant, GCObject* ancestor)
+{
+	ClassInfo* currentInfo = descendant->getClassInfo();
+	ClassInfo* ancestorInfo = ancestor->getClassInfo();
+	do {
+		if (currentInfo == ancestorInfo)
+			return true;
+		else
+			currentInfo = currentInfo->parentInfo;
+	} while (currentInfo);
+	return false;
+}
+
+inline bool isSameType(GCObject* left, GCObject* right)
+{
+	return left->getClassInfo() == right->getClassInfo();
+}
+
+template<typename T>
+bool isTypeOf(GCObject* object)
+{
+	return T::GetClassInfo() == object->getClassInfo();
+}
 
 }
 #endif //GUARD_GCOBJECT_H
