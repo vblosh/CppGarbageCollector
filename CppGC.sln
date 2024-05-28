@@ -1,10 +1,8 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 16
-VisualStudioVersion = 16.0.34407.143
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.34916.146
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "CppGC", "CppGC\CppGC.vcxproj", "{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CSPerfTest", "CSPerfTest\CSPerfTest.csproj", "{B081518E-AF31-4145-91D7-06F7684353EE}"
 EndProject
 Global
@@ -17,16 +15,6 @@ Global
 		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Debug|Any CPU.ActiveCfg = Debug|Win32
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Debug|x64.ActiveCfg = Debug|x64
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Debug|x64.Build.0 = Debug|x64
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Debug|x86.ActiveCfg = Debug|Win32
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Debug|x86.Build.0 = Debug|Win32
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Release|Any CPU.ActiveCfg = Release|Win32
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Release|x64.ActiveCfg = Release|x64
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Release|x64.Build.0 = Release|x64
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Release|x86.ActiveCfg = Release|Win32
-		{DB531FB1-3B35-484B-92F5-CEE8E9777AEB}.Release|x86.Build.0 = Release|Win32
 		{B081518E-AF31-4145-91D7-06F7684353EE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B081518E-AF31-4145-91D7-06F7684353EE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B081518E-AF31-4145-91D7-06F7684353EE}.Debug|x64.ActiveCfg = Debug|Any CPU

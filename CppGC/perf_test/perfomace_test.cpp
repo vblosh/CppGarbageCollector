@@ -1,8 +1,9 @@
 #include <iostream>
 #include <fstream>
 #include <chrono>
+#include <vector>
+#include <iomanip>
 
-#include "GCPerfTest.h"
 #include "GarbageCollector.h"
 
 using Typ = double;
@@ -60,9 +61,9 @@ void DFS(Node* node)
     DFS(node->right);
 }
 
-int perfomanceTest()
+int performanceTest()
 {
-    std::cout << "Perfomance test started\n";
+    std::cout << "Performance test started\n";
     std::chrono::duration<double> elapsed;
 
     std::vector<double> data(NUM_INS);
@@ -109,7 +110,12 @@ int perfomanceTest()
     elapsed = std::chrono::high_resolution_clock::now() - start;
     std::cout << "depth first search " << elapsed.count() << "s elapsed\n";
     std::cout << "Sum of binary tree's values=" << std::setprecision(16) << g_Sum << '\n';
-    std::cout << "Perfomance test ended\n";
+    std::cout << "Performance test ended\n";
 
     return 0;
+}
+
+int main(void)
+{
+    return performanceTest();
 }
