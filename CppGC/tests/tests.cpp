@@ -128,15 +128,8 @@ TEST(GCOBJECT, isTypeOfFalse)
     ASSERT_FALSE(isTypeOf<Boo>(gc.createInstance<Foo>(1)));
 }
 
-int main(int argc, char** argv) {
-    bool unitTests = true;
-    if (unitTests)
-    {
-        ::testing::InitGoogleTest(&argc, argv);
-        return RUN_ALL_TESTS();
-    }
-    else
-    {
-        return perfomanceTest();
-    }
+int main(int argc, char** argv) 
+{
+	::testing::InitGoogleTest(&argc, argv);
+	return RUN_ALL_TESTS();
 }
