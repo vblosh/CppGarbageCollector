@@ -61,7 +61,7 @@ namespace cppgc
 			{
 				for (size_t i = 0; i < pInfo->pointersCount; ++i)
 				{
-					GCObjectPtr* pChild = reinterpret_cast<GCObjectPtr*>(reinterpret_cast<char*>(node) + pInfo->ptrOffsets[i]);
+					GCObjectPtr* pChild = reinterpret_cast<GCObjectPtr*>(reinterpret_cast<char*>(node) + pInfo->memberPtrs[i]);
 					GCObjectPtr child = *pChild;
 					if (child && !child->visited)
 						DFS(child);

@@ -1,6 +1,8 @@
 #ifndef GUARD_GCOBJECT_H
 #define GUARD_GCOBJECT_H
 
+#include <cstddef>
+
 namespace cppgc
 {
 	struct  ClassInfo
@@ -8,7 +10,7 @@ namespace cppgc
 		size_t sizeOf;
 		size_t alignOf;
 		size_t pointersCount;
-		size_t* ptrOffsets;
+		size_t* memberPtrs;
 		ClassInfo* parentInfo;
 	};
 
@@ -94,22 +96,22 @@ virtual ClassInfo* getClassInfo() override { return &classInfo; }; \
 static ClassInfo* GetClassInfo() { return &classInfo; }; \
 private: \
 static ClassInfo classInfo; \
-static size_t ptrOffsets[]; \
+static size_t memberPtrs[]; \
 
 #define IMPLEMENT_GCOBJECT_CLASS(Type) \
-ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, nullptr }; \
+ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::memberPtrs) / sizeof(size_t), Type::memberPtrs, nullptr }; \
 
 #define GCOBJECT_POINTER_MAP_BEGIN(Type) \
-size_t Type::ptrOffsets[] = { \
+size_t Type::memberPtrs[] = { \
 
 #define GCPOINTER(Type, Member) \
     offsetof(Type, Member), \
 
 #define GCOBJECT_POINTER_MAP_END(Type) }; \
-ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, nullptr }; \
+ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::memberPtrs) / sizeof(size_t), Type::memberPtrs, nullptr }; \
 
 #define GCOBJECT_POINTER_MAP_WITH_PARENT_END(Type, Parent) }; \
-ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::ptrOffsets) / sizeof(size_t), Type::ptrOffsets, Parent::GetClassInfo() }; \
+ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), sizeof(Type::memberPtrs) / sizeof(size_t), Type::memberPtrs, Parent::GetClassInfo() }; \
 
 inline bool isSubclassOf(GCObject* descendant, GCObject* ancestor)
 {
