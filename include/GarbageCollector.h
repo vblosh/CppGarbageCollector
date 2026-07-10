@@ -2,8 +2,11 @@
 #define GARBAGE_COLLECTOR_H
 
 #include <memory>
-#include <forward_list>
 #include <set>
+#include <stdexcept>
+#include <type_traits>
+#include <unordered_set>
+#include <utility>
 
 #include "GCObject.h"
 #include "IRootsRegistry.h"
@@ -14,97 +17,105 @@ namespace cppgc
 	class GarbageCollector : public IRootsRegistry
 	{
 	public:
-		GarbageCollector() : objects_count(0)
-		{}
+		GarbageCollector() = default;
+		GarbageCollector(const GarbageCollector&) = delete;
+		GarbageCollector& operator=(const GarbageCollector&) = delete;
+		GarbageCollector(GarbageCollector&&) = delete;
+		GarbageCollector& operator=(GarbageCollector&&) = delete;
 
-		~GarbageCollector()
+		~GarbageCollector() override
 		{
-			for (auto ptr : allocated)
-			{
-				delete ptr;
-			}
-			allocated.clear();
-			objects_count = 0;
+			for (auto root : roots)
+				root->detachRegistry(this);
 			roots.clear();
+
+			for (auto ptr : allocated)
+				delete ptr;
+			allocated.clear();
 		}
 
-		// Inherited via IRootsRegistry
-		virtual void addRoot(GCObjectRootPtrBase* root) override
+		void addRoot(GCObjectRootPtrBase* root) override
 		{
 			roots.insert(root);
 		}
 
-		virtual void removeRoot(GCObjectRootPtrBase* root) override
+		void removeRoot(GCObjectRootPtrBase* root) override
 		{
 			roots.erase(root);
+		}
+
+		bool owns(const GCObject* object) const override
+		{
+			return object && allocated.find(const_cast<GCObject*>(object)) != allocated.end();
 		}
 
 		template<class T, class... Args>
 		T* createInstance(Args&&... args)
 		{
-			T* ptr = ::new T(std::forward<Args>(args)...);
+			static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
 
-			allocated.push_front(ptr);
-			++objects_count;
+			auto object = std::make_unique<T>(std::forward<Args>(args)...);
+			T* ptr = object.get();
+			const auto result = allocated.insert(ptr);
+			if (!result.second)
+				throw std::logic_error("duplicate managed object address");
+			object.release();
 			return ptr;
 		}
 
-		void DFS(GCObjectPtr node)
+		void DFS(GCObjectPtr root)
 		{
-			if ((node == nullptr) || (node->visited))
-				return;
+			GCPointerList pending;
+			pending.push_back(root);
 
-			node->visited = true;
-			ClassInfo* pInfo = node->getClassInfo();
-
-			do
+			while (!pending.empty())
 			{
-				for (size_t i = 0; i < pInfo->pointersCount; ++i)
+				GCObjectPtr node = pending.back();
+				pending.pop_back();
+
+				const auto owned = allocated.find(node);
+				if (owned == allocated.end() || node->visited)
+					continue;
+
+				node->visited = true;
+				for (const ClassInfo* info = node->getClassInfo(); info; info = info->parentInfo)
 				{
-					GCObjectPtr* pChild = reinterpret_cast<GCObjectPtr*>(reinterpret_cast<char*>(node) + pInfo->memberPtrs[i]);
-					GCObjectPtr child = *pChild;
-					if (child && !child->visited)
-						DFS(child);
+					if (info->tracePointers)
+						info->tracePointers(node, pending);
 				}
-				pInfo = pInfo->parentInfo;
-			} while (pInfo);
+			}
 		}
 
 		void collect()
 		{
-			// make depth first search on all roots
-			// and mark all objects as visited
 			for (auto root : roots)
-			{
 				DFS(root->get());
-			}
-			// destroy and deallocate all unvisited objects
-			for (auto before_ptr = allocated.before_begin(); std::next(before_ptr) != allocated.end();)
+
+			GCPointerList garbage;
+			garbage.reserve(allocated.size());
+			for (auto ptr : allocated)
 			{
-				GCObjectPtr ptr = *std::next(before_ptr);
-				if (!ptr->visited) {
-					delete ptr;
-					allocated.erase_after(before_ptr);
-					--objects_count;
-				}
-				else {
+				if (!ptr->visited)
+					garbage.push_back(ptr);
+				else
 					ptr->visited = false;
-					before_ptr++;
-				}
 			}
+
+			for (auto ptr : garbage)
+				allocated.erase(ptr);
+			for (auto ptr : garbage)
+				delete ptr;
 		}
 
-		size_t get_objects_count()
+		size_t get_objects_count() const noexcept
 		{
-			return objects_count;
+			return allocated.size();
 		}
 
 	private:
-		size_t objects_count;
 		std::set<GCObjectRootPtrBase*> roots;
-		std::forward_list<GCObjectPtr> allocated;
+		std::unordered_set<GCObjectPtr> allocated;
 	};
-
 }
 
 #endif // GARBAGE_COLLECTOR_H
