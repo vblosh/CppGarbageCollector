@@ -5,11 +5,13 @@ project(CppGC VERSION 1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
+enable_testing()
+
 # Add include directories
 include_directories(include)
 
 # Add unit tests
 add_subdirectory(tests)
 
-# Add perfomance test
+# Add performance test
 add_subdirectory(perf_test)
