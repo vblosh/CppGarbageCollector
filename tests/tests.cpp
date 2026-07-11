@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <thread>
@@ -351,6 +352,7 @@ TEST(GCTEST, collectionThresholdTriggersBeforeAllocation)
     ASSERT_EQ(2, gc.get_objects_count());
     ASSERT_TRUE(gc.owns(newest));
     ASSERT_EQ(2, gc.get_collection_threshold());
+    ASSERT_EQ(1025, gc.get_next_collection_threshold());
 }
 
 TEST(GCTEST, collectionThresholdCanBeChanged)
@@ -360,6 +362,45 @@ TEST(GCTEST, collectionThresholdCanBeChanged)
     gc.set_collection_threshold(4);
 
     ASSERT_EQ(4, gc.get_collection_threshold());
+    ASSERT_EQ(4, gc.get_next_collection_threshold());
+}
+
+TEST(GCTEST, adaptiveThresholdAvoidsRepeatedCollection)
+{
+    GarbageCollector gc(2);
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(1);
+    gc.createInstance<Foo>(2);
+
+    gc.createInstance<Foo>(3); // Collects one unreachable object; next threshold becomes 1025.
+    for (int id = 4; id <= 20; ++id)
+        gc.createInstance<Foo>(id);
+
+    ASSERT_EQ(19, gc.get_objects_count());
+    ASSERT_EQ(1025, gc.get_next_collection_threshold());
+}
+
+TEST(GCTEST, zeroThresholdKeepsAutomaticCollectionDisabled)
+{
+    GarbageCollector gc(4);
+    gc.set_collection_threshold(0);
+
+    for (int id = 0; id < 10; ++id)
+        gc.createInstance<Foo>(id);
+
+    ASSERT_EQ(10, gc.get_objects_count());
+    ASSERT_EQ(0, gc.get_collection_threshold());
+    ASSERT_EQ(0, gc.get_next_collection_threshold());
+}
+
+TEST(GCTEST, adaptiveThresholdSaturatesInsteadOfOverflowing)
+{
+    const size_t maximum = std::numeric_limits<size_t>::max();
+
+    ASSERT_EQ(maximum,
+        detail::calculateNextCollectionThreshold(1, maximum - 100));
+    ASSERT_EQ(0,
+        detail::calculateNextCollectionThreshold(0, maximum));
 }
 
 TEST(GCTEST, randomizedGraphCollectsUnreachableComponent)
