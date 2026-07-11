@@ -8,10 +8,11 @@ set(DATA_FILE "${CMAKE_SOURCE_DIR}/data/data.bin")
 set(DEST_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 
 add_executable(${PERF_TESTS} ${SOURCE_FILES})
-target_include_directories(${PERF_TESTS} PRIVATE )
+target_link_libraries(${PERF_TESTS} PRIVATE cppgc)
 
 # Copy the data file to the build directory
 add_custom_command(
     TARGET ${PERF_TESTS} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${DATA_FILE} ${DEST_DIR}
+    VERBATIM
 )
