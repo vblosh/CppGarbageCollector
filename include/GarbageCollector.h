@@ -1,6 +1,7 @@
 #ifndef GARBAGE_COLLECTOR_H
 #define GARBAGE_COLLECTOR_H
 
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -18,11 +19,32 @@
 
 namespace cppgc
 {
+	namespace detail
+	{
+		inline constexpr size_t minimumThresholdGrowth = 1024;
+
+		inline size_t calculateNextCollectionThreshold(
+			size_t configuredMinimumThreshold, size_t liveObjects) noexcept
+		{
+			if (configuredMinimumThreshold == 0)
+				return 0;
+
+			const size_t growth = std::max(liveObjects / 2, minimumThresholdGrowth);
+			const size_t maximum = std::numeric_limits<size_t>::max();
+			const size_t grownThreshold = liveObjects > maximum - growth
+				? maximum
+				: liveObjects + growth;
+			return std::max(configuredMinimumThreshold, grownThreshold);
+		}
+	}
+
 	class GarbageCollector : public IRootsRegistry
 	{
 	public:
 		explicit GarbageCollector(size_t collectionThreshold = 0)
-			: collectionThreshold(collectionThreshold), ownerThread(std::this_thread::get_id())
+			: configuredMinimumThreshold(collectionThreshold),
+			nextCollectionThreshold(collectionThreshold),
+			ownerThread(std::this_thread::get_id())
 		{}
 
 		GarbageCollector(const GarbageCollector&) = delete;
@@ -71,7 +93,7 @@ namespace cppgc
 			ensureOwnerThread();
 			ensureIdle("allocate an object");
 
-			if (collectionThreshold && allocated.size() >= collectionThreshold)
+			if (nextCollectionThreshold && allocated.size() >= nextCollectionThreshold)
 				collect();
 
 			auto object = std::make_unique<T>(std::forward<Args>(args)...);
@@ -123,6 +145,8 @@ namespace cppgc
 					ptr->collectorIdentity = nullptr;
 				for (auto ptr : garbage)
 					delete ptr;
+
+				updateNextCollectionThreshold();
 			}
 			catch (...)
 			{
@@ -137,12 +161,18 @@ namespace cppgc
 		{
 			ensureOwnerThread();
 			ensureIdle("change the collection threshold");
-			collectionThreshold = threshold;
+			configuredMinimumThreshold = threshold;
+			nextCollectionThreshold = threshold;
 		}
 
 		size_t get_collection_threshold() const noexcept
 		{
-			return collectionThreshold;
+			return configuredMinimumThreshold;
+		}
+
+		size_t get_next_collection_threshold() const noexcept
+		{
+			return nextCollectionThreshold;
 		}
 
 		size_t get_objects_count() const noexcept
@@ -182,6 +212,12 @@ namespace cppgc
 			{
 				++currentEpoch;
 			}
+		}
+
+		void updateNextCollectionThreshold() noexcept
+		{
+			nextCollectionThreshold = detail::calculateNextCollectionThreshold(
+				configuredMinimumThreshold, allocated.size());
 		}
 
 		void traceDirectEdges(GCObjectPtr object, GCPointerList& pointers) const
@@ -231,7 +267,8 @@ namespace cppgc
 			}
 		}
 
-		size_t collectionThreshold;
+		size_t configuredMinimumThreshold;
+		size_t nextCollectionThreshold;
 		std::thread::id ownerThread;
 		State state = State::idle;
 		uint64_t currentEpoch = 0;

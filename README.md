@@ -175,23 +175,47 @@ units.
 
 ## Automatic collection threshold
 
-Passing a positive threshold enables collection based on the current number of
-owned objects:
+Passing a positive threshold sets the minimum automatic-collection threshold:
 
 ```cpp
 cppgc::GarbageCollector gc(10000);
 ```
 
+The collector keeps two values:
+
+- The configured minimum threshold, returned by `get_collection_threshold()`.
+- The adaptive next threshold, returned by `get_next_collection_threshold()`.
+
 Before creating a new object, `createInstance()` calls `collect()` when the
-current object count is greater than or equal to the threshold. The new object
-is allocated after that collection, so it cannot be reclaimed during its own
-creation. A threshold of `0` disables automatic collection.
+current object count is greater than or equal to the adaptive next threshold.
+The new object is allocated after that collection, so it cannot be reclaimed
+during its own creation.
+
+After every successful collection, the next threshold is recomputed from the
+number of surviving objects. It grows by 50% of the live count or at least 1,024
+objects, whichever is greater, and never falls below the configured minimum.
+The calculation saturates at `std::numeric_limits<size_t>::max()` rather than
+overflowing. This prevents a mostly-live heap from collecting again before every
+subsequent allocation.
+
+Conceptually, the calculation is:
+
+```text
+growth = max(live_objects / 2, 1024)
+next_threshold = max(configured_minimum, saturating_add(live_objects, growth))
+```
+
+A threshold of `0` disables automatic collection.
 
 The threshold can be changed while the collector is idle:
 
 ```cpp
 gc.set_collection_threshold(20000);
 ```
+
+Changing the threshold resets both the configured minimum and the next trigger
+to the supplied value. The next successful collection makes the trigger adaptive
+again.
 
 Automatic collection does not make local raw pointers into roots. Any object
 that must survive a threshold-triggered collection must already be reachable
