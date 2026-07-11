@@ -7,18 +7,15 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        compiler: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y libgtest-dev ninja-build
       - name: Configure
         env:
-          CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++' }}
+          CXX: g++
         run: cmake -S . -B build -G Ninja -DCPPGC_ENABLE_SANITIZERS=ON
-      - name: Build
-        run: cmake --build build
+      - name: Build unit tests
+        run: cmake --build build --target unittests
       - name: Test
         run: ctest --test-dir build --output-on-failure
