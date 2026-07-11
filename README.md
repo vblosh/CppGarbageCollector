@@ -251,16 +251,30 @@ from a registered root.
 
 ## Build and test
 
-```sh
-cmake -S . -B build
+The repository contains a `vcpkg.json` manifest for GoogleTest. Enable manifest
+mode by passing the vcpkg toolchain during the first CMake configuration. For
+the default Windows installation used by this project:
+
+```powershell
+$env:VCPKG_ROOT = "C:\src\vcpkg"
+
+cmake -S . -B build `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+  -DVCPKG_TARGET_TRIPLET=x64-windows
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+The toolchain reads the manifest and installs dependencies into the build tree.
+Use a fresh build directory when enabling or changing the toolchain because
+CMake caches toolchain selection.
+
 Enable AddressSanitizer and UndefinedBehaviorSanitizer with GCC or Clang:
 
 ```sh
-cmake -S . -B build -DCPPGC_ENABLE_SANITIZERS=ON
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+  -DCPPGC_ENABLE_SANITIZERS=ON
 ```
 
 The repository's CI builds and tests with both GCC and Clang sanitizers. The
