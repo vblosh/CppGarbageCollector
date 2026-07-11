@@ -140,9 +140,10 @@ namespace cppgc
 				}
 
 				for (auto ptr : garbage)
+				{
 					allocated.erase(ptr);
-				for (auto ptr : garbage)
 					ptr->collectorIdentity = nullptr;
+				}
 				for (auto ptr : garbage)
 					delete ptr;
 

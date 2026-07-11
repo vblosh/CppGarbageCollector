@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "cpp-garbage-collector",
+  "version-string": "1.0.0",
+  "builtin-baseline": "cf1c7380e710d5d2b483b0645eaf442704971bac",
+  "dependencies": [
+    "gtest"
+  ]
+}
