@@ -21,4 +21,6 @@ enable_testing()
 add_subdirectory(tests)
 
 # Add performance test
-add_subdirectory(perf_test)
+option(CPPGC_BUILD_PERF_TESTS "Build the performance test executable" ON)
+if(CPPGC_BUILD_PERF_TESTS)
+    add_subdirectory(perf_test)
