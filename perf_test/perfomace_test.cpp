@@ -16,12 +16,12 @@ class Node : public GCObject
     DECLARE_GCOBJECT_CLASS(Node)
 public:
     Node(Typ val)
-        : left(nullptr), right(nullptr), value(val)
+        : left(this), right(this), value(val)
     {
     }
 
-    Node* left;
-    Node* right;
+    GCMember<Node> left;
+    GCMember<Node> right;
     Typ value;
 };
 
