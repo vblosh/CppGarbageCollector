@@ -10,6 +10,8 @@ target_include_directories(cppgc INTERFACE
 )
 
 option(CPPGC_ENABLE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+option(CPPGC_BUILD_PERF_TESTS "Build the performance test executable" ON)
+
 if(CPPGC_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(cppgc INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(cppgc INTERFACE -fsanitize=address,undefined)
@@ -20,7 +22,6 @@ enable_testing()
 # Add unit tests
 add_subdirectory(tests)
 
-# Add performance test
-option(CPPGC_BUILD_PERF_TESTS "Build the performance test executable" ON)
 if(CPPGC_BUILD_PERF_TESTS)
     add_subdirectory(perf_test)
+endif()

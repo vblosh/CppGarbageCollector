@@ -277,6 +277,15 @@ cmake -S . -B build \
   -DCPPGC_ENABLE_SANITIZERS=ON
 ```
 
+The performance test (a heavier benchmark-style binary) is built by default.
+To skip it (e.g. in CI or for faster configuration):
+
+```sh
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+  -DCPPGC_BUILD_PERF_TESTS=OFF
+```
+
 The repository's CI builds and tests with both GCC and Clang sanitizers. The
 unit suite covers cycles, deep graphs, root and collector lifetimes,
 cross-collector references, reentrancy, thread affinity, thresholds, exception
