@@ -17,33 +17,35 @@ It does not inspect the native stack or automatically discover ordinary pointers
 ## Basic usage
 
 Define a managed type by deriving from `cppgc::GCObject`. Prefer
-`cppgc::GCMember<T>` for references between managed objects and list every
-managed member in the pointer map:
+`cppgc::GCMember<T>` for references between managed objects. Override the
+virtual `trace` method and push managed pointers using `getGCObjectPointer`:
 
 ```cpp
 #include "GarbageCollector.h"
 
 class Node : public cppgc::GCObject
 {
-    DECLARE_GCOBJECT_CLASS(Node)
-
 public:
     explicit Node(int value)
         : next(this), value(value)
     {}
 
+    void trace(cppgc::GCPointerList& pointers) const override
+    {
+        pointers.push_back(cppgc::getGCObjectPointer(next));
+    }
+
     cppgc::GCMember<Node> next;
     int value;
 };
-
-GCOBJECT_POINTER_MAP_BEGIN(Node)
-GCPOINTER(Node, next)
-GCOBJECT_POINTER_MAP_END(Node)
 ```
 
-The `this` argument associates `next` with its containing object. Once that
-object belongs to a collector, `GCMember<T>` rejects assignments to objects
-owned by a different collector.
+The `this` passed to `GCMember` ctor associates the member with its containing
+object for ownership checks. Once that object belongs to a collector,
+`GCMember<T>` rejects assignments to objects owned by a different collector.
+
+**Inheritance tracing**: always call `Base::trace(pointers);` from your `trace`
+override when the base declares managed pointers.
 
 Create objects through `GarbageCollector::createInstance()` and keep externally
 reachable objects in `GCObjectRootPtr<T>` roots:
@@ -76,10 +78,9 @@ When `collect()` is called:
 
 1. Every registered root is placed in an iterative work list.
 2. Reachable objects are marked with the current collection epoch.
-3. Generated pointer-map functions add child objects to the work list.
-4. Parent-class metadata is followed so inherited managed members are traced.
-5. Objects not marked in the current epoch are removed from the ownership set.
-6. Unreachable objects are destroyed.
+3. The `trace` overrides add child objects to the work list (call base `trace` for inherited members).
+4. Objects not marked in the current epoch are removed from the ownership set.
+5. Unreachable objects are destroyed.
 
 The traversal uses an explicit work list rather than recursive function calls,
 so graph depth does not consume the native call stack. Epoch marking avoids a
@@ -117,23 +118,23 @@ does not access a dead collector.
 and `reset()`. It is intentionally not copyable because copying it would also
 copy the identity of its containing object.
 
-Every managed member, including a `GCMember<T>`, must still be declared with
-`GCPOINTER`. C++17 has no standard reflection mechanism that lets the collector
-find members automatically.
+Every managed pointer (GCMember or raw) must be explicitly pushed via
+`getGCObjectPointer` inside your `trace` override. C++17 has no standard
+reflection mechanism that lets the collector find members automatically.
 
 Raw pointer members remain supported for compatibility:
 
 ```cpp
 class LegacyNode : public cppgc::GCObject
 {
-    DECLARE_GCOBJECT_CLASS(LegacyNode)
 public:
     LegacyNode* next = nullptr;
-};
 
-GCOBJECT_POINTER_MAP_BEGIN(LegacyNode)
-GCPOINTER(LegacyNode, next)
-GCOBJECT_POINTER_MAP_END(LegacyNode)
+    void trace(cppgc::GCPointerList& pointers) const override
+    {
+        pointers.push_back(cppgc::getGCObjectPointer(next));
+    }
+};
 ```
 
 Raw members cannot reject cross-collector assignments. During tracing, foreign
@@ -146,32 +147,45 @@ and throws `std::invalid_argument`.
 
 ## Pointer-free and inherited types
 
-Use the pointer-free macros when a class has no managed members:
+**Normal usage requires zero registration beyond `trace`**: when a class has
+no managed pointers, simply derive from `GCObject` and do not override `trace`
+(the base empty impl is sufficient). No ClassInfo needed.
+
+**Only if you use runtime type queries** (`isTypeOf<T>`, `isSubclassOf`,
+`isSameType`, or `T::GetClassInfo()` for multi-TU tests), supply a minimal
+static ClassInfo registration (C++17 inline statics allow header use):
 
 ```cpp
 class ValueObject : public cppgc::GCObject
 {
-    DECLARE_GCOBJECT_CLASS_NO_PTR(ValueObject)
+public:
+    static inline const cppgc::ClassInfo classInfo{ nullptr };
+    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
+    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 };
-
-IMPLEMENT_GCOBJECT_CLASS_NO_PTR(ValueObject)
 ```
 
-For a derived pointer-free type, preserve runtime inheritance metadata with:
+For derived types that need the queries, set parent and call base trace (if any):
 
 ```cpp
-IMPLEMENT_GCOBJECT_CLASS_NO_PTR_WITH_PARENT(Derived, Parent)
+class Derived : public Parent
+{
+public:
+    static inline const cppgc::ClassInfo classInfo{ Parent::GetClassInfo() };
+    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
+    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
+
+    void trace(cppgc::GCPointerList& pointers) const override
+    {
+        // push own members using getGCObjectPointer
+        Parent::trace(pointers);
+    }
+};
 ```
 
-For a derived type with managed members, close its pointer map with:
-
-```cpp
-GCOBJECT_POINTER_MAP_WITH_PARENT_END(Derived, Parent)
-```
-
-Metadata definitions generated by these macros are C++17 inline definitions,
-so managed classes may be declared in headers included by multiple translation
-units.
+ClassInfo is only for the is* queries + inheritance metadata chain. The primary
+tracing is always via the virtual `trace` (standard C++, no macros).
+See tests for full examples.
 
 ## Automatic collection threshold
 
@@ -240,7 +254,7 @@ from a registered root.
 ## Limitations
 
 - No conservative stack scanning: reachability comes only from registered roots
-  and declared pointer-map members.
+  and declared members in `trace` overrides.
 - No moving or compacting collection.
 - No concurrent or parallel collection.
 - No weak-reference or finalizer API.
@@ -275,6 +289,15 @@ Enable AddressSanitizer and UndefinedBehaviorSanitizer with GCC or Clang:
 cmake -S . -B build \
   -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
   -DCPPGC_ENABLE_SANITIZERS=ON
+```
+
+The performance test (a heavier benchmark-style binary) is built by default.
+To skip it (e.g. in CI or for faster configuration):
+
+```sh
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+  -DCPPGC_BUILD_PERF_TESTS=OFF
 ```
 
 The repository's CI builds and tests with both GCC and Clang sanitizers. The

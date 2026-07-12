@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 namespace cppgc
@@ -15,22 +16,30 @@ namespace cppgc
 
 	using GCObjectPtr = GCObject*;
 	using GCPointerList = std::vector<GCObjectPtr>;
-	using TracePointers = void (*)(GCObjectPtr, GCPointerList&);
 
 	struct ClassInfo
 	{
-		size_t sizeOf;
-		size_t alignOf;
-		TracePointers tracePointers;
 		const ClassInfo* parentInfo;
 	};
+
+	// NOTE: Most users need *no* ClassInfo registration.
+	// Override only virtual trace(GCPointerList&) for managed pointers.
+	// If you use the is* free functions (isTypeOf<T>, isSubclassOf, isSameType)
+	// or rely on GetClassInfo() for multi-TU identity, provide a minimal
+	// static registration in your class (see README "Pointer-free and inherited types").
 
 	class GCObject
 	{
 	public:
 		// Sweep order is unspecified; destructors must not dereference managed peers.
 		virtual ~GCObject() = default;
-		virtual const ClassInfo* getClassInfo() const = 0;
+
+		// Override to trace managed pointers (use getGCObjectPointer for members).
+		// IMPORTANT for inheritance: if your base class has traced members,
+		// call Base::trace(pointers); inside your override so the full chain is visited.
+		virtual void trace(GCPointerList& pointers) const {}
+
+		virtual const ClassInfo* getClassInfo() const { return nullptr; }
 
 	private:
 		friend class GarbageCollector;
@@ -39,6 +48,12 @@ namespace cppgc
 
 		const void* collectorIdentity = nullptr;
 		uint64_t markEpoch = 0;
+
+		bool hasCollectorIdentity() const noexcept { return collectorIdentity != nullptr; }
+		bool sharesCollectorIdentity(const GCObject* other) const noexcept
+		{
+			return other && collectorIdentity == other->collectorIdentity;
+		}
 	};
 
 	template<class T>
@@ -47,11 +62,14 @@ namespace cppgc
 	public:
 		explicit GCMember(GCObject* owner = nullptr) noexcept
 			: owner(owner)
-		{}
+		{
+			static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
+		}
 
 		GCMember(GCObject* owner, T* initialValue)
 			: owner(owner)
 		{
+			static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
 			assign(initialValue);
 		}
 
@@ -93,8 +111,8 @@ namespace cppgc
 		void assign(T* newValue)
 		{
 			GCObject* target = static_cast<GCObject*>(newValue);
-			if (target && owner && owner->collectorIdentity &&
-				target->collectorIdentity != owner->collectorIdentity)
+			if (target && owner && owner->hasCollectorIdentity() &&
+				!owner->sharesCollectorIdentity(target))
 			{
 				throw std::invalid_argument("managed edge crosses collector ownership");
 			}
@@ -117,45 +135,6 @@ namespace cppgc
 		return static_cast<GCObjectPtr>(pointer.get());
 	}
 
-#define DECLARE_GCOBJECT_CLASS_NO_PTR(Type) \
-public: \
-static const cppgc::ClassInfo classInfo; \
-static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; } \
-virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-#define IMPLEMENT_GCOBJECT_CLASS_NO_PTR(Type) \
-inline const cppgc::ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), nullptr, nullptr };
-
-#define IMPLEMENT_GCOBJECT_CLASS_NO_PTR_WITH_PARENT(Type, Parent) \
-inline const cppgc::ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), nullptr, Parent::GetClassInfo() };
-
-#define DECLARE_GCOBJECT_CLASS(Type) \
-public: \
-virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; } \
-static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; } \
-private: \
-static void tracePointers(cppgc::GCObjectPtr object, cppgc::GCPointerList& pointers); \
-static const cppgc::ClassInfo classInfo;
-
-#define IMPLEMENT_GCOBJECT_CLASS(Type) \
-inline const cppgc::ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), &Type::tracePointers, nullptr };
-
-#define GCOBJECT_POINTER_MAP_BEGIN(Type) \
-inline void Type::tracePointers(cppgc::GCObjectPtr object, cppgc::GCPointerList& pointers) \
-{ \
-	Type* self = static_cast<Type*>(object);
-
-#define GCPOINTER(Type, Member) \
-	pointers.push_back(cppgc::getGCObjectPointer(self->Member));
-
-#define GCOBJECT_POINTER_MAP_END(Type) \
-} \
-inline const cppgc::ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), &Type::tracePointers, nullptr };
-
-#define GCOBJECT_POINTER_MAP_WITH_PARENT_END(Type, Parent) \
-} \
-inline const cppgc::ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), &Type::tracePointers, Parent::GetClassInfo() };
-
 	inline bool isSubclassOf(const GCObject* descendant, const GCObject* ancestor)
 	{
 		if (!descendant || !ancestor)
@@ -163,6 +142,8 @@ inline const cppgc::ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), &Typ
 
 		const ClassInfo* currentInfo = descendant->getClassInfo();
 		const ClassInfo* ancestorInfo = ancestor->getClassInfo();
+		if (!currentInfo || !ancestorInfo)
+			return false;
 		do
 		{
 			if (currentInfo == ancestorInfo)
@@ -174,13 +155,18 @@ inline const cppgc::ClassInfo Type::classInfo{ sizeof(Type), alignof(Type), &Typ
 
 	inline bool isSameType(const GCObject* left, const GCObject* right)
 	{
-		return left && right && left->getClassInfo() == right->getClassInfo();
+		if (!left || !right)
+			return false;
+		const ClassInfo* li = left->getClassInfo();
+		const ClassInfo* ri = right->getClassInfo();
+		return li && ri && li == ri;
 	}
 
 	template<typename T>
 	bool isTypeOf(const GCObject* object)
 	{
-		return object && T::GetClassInfo() == object->getClassInfo();
+		const ClassInfo* ti = T::GetClassInfo();
+		return object && ti && ti == object->getClassInfo();
 	}
 }
 

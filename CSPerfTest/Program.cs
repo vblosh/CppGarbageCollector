@@ -50,7 +50,7 @@ namespace GCPerfTest
             DFS(node.left);
             DFS(node.right);
         }
-        static void perfomanceTest()
+        static void performanceTest()
         {
             var data = new Typ[NUM_INS];
             bool load = true;
@@ -120,7 +120,7 @@ namespace GCPerfTest
 
         static void Main(string[] args)
         {
-            perfomanceTest();
+            performanceTest();
         }
     }
 }
