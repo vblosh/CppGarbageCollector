@@ -1,0 +1,18 @@
+set(SOURCE_FILES perfomace_test.cpp)
+set(PERF_TESTS perfomace_test)
+
+# Define the path to the data file
+set(DATA_FILE "${CMAKE_SOURCE_DIR}/data/data.bin")
+
+# Define the path to the destination directory
+set(DEST_DIR "${CMAKE_CURRENT_BINARY_DIR}")
+
+add_executable(${PERF_TESTS} ${SOURCE_FILES})
+target_link_libraries(${PERF_TESTS} PRIVATE cppgc)
+
+# Copy the data file to the build directory
+add_custom_command(
+    TARGET ${PERF_TESTS} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${DATA_FILE} ${DEST_DIR}
+    VERBATIM
+)
