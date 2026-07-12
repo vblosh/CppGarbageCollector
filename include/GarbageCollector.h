@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -61,9 +60,10 @@ namespace cppgc
 
 			auto objects = std::move(allocated);
 			for (auto ptr : objects)
+			{
 				ptr->collectorIdentity = nullptr;
-			for (auto ptr : objects)
 				delete ptr;
+			}
 		}
 
 		void addRoot(GCObjectRootPtrBase* root) override
@@ -82,7 +82,7 @@ namespace cppgc
 		bool owns(const GCObject* object) const override
 		{
 			ensureOwnerThread();
-			return object && allocated.find(const_cast<GCObject*>(object)) != allocated.end();
+			return isAllocated(const_cast<GCObject*>(object));
 		}
 
 		template<class T, class... Args>
@@ -143,9 +143,8 @@ namespace cppgc
 				{
 					allocated.erase(ptr);
 					ptr->collectorIdentity = nullptr;
+					delete ptr;  // state remains 'collecting' during sweep (per original design)
 				}
-				for (auto ptr : garbage)
-					delete ptr;
 
 				updateNextCollectionThreshold();
 			}
@@ -166,18 +165,21 @@ namespace cppgc
 			nextCollectionThreshold = threshold;
 		}
 
-		size_t get_collection_threshold() const noexcept
+		size_t get_collection_threshold() const
 		{
+			ensureOwnerThread();
 			return configuredMinimumThreshold;
 		}
 
-		size_t get_next_collection_threshold() const noexcept
+		size_t get_next_collection_threshold() const
 		{
+			ensureOwnerThread();
 			return nextCollectionThreshold;
 		}
 
-		size_t get_objects_count() const noexcept
+		size_t get_objects_count() const
 		{
+			ensureOwnerThread();
 			return allocated.size();
 		}
 
@@ -223,11 +225,8 @@ namespace cppgc
 
 		void traceDirectEdges(GCObjectPtr object, GCPointerList& pointers) const
 		{
-			for (const ClassInfo* info = object->getClassInfo(); info; info = info->parentInfo)
-			{
-				if (info->tracePointers)
-					info->tracePointers(object, pointers);
-			}
+			if (object)
+				object->trace(pointers);
 		}
 
 		void validateDirectEdges(GCObjectPtr object) const
@@ -236,14 +235,14 @@ namespace cppgc
 			traceDirectEdges(object, pointers);
 			for (auto pointer : pointers)
 			{
-				if (pointer && allocated.find(pointer) == allocated.end())
+				if (pointer && !isAllocated(pointer))
 					throw std::invalid_argument("managed object has an edge outside its collector");
 			}
 		}
 
 		void markReachable(GCObjectPtr root)
 		{
-			if (allocated.find(root) == allocated.end())
+			if (!isAllocated(root))
 				return;
 
 			GCPointerList pending;
@@ -260,7 +259,7 @@ namespace cppgc
 				traceDirectEdges(node, children);
 				for (auto child : children)
 				{
-					if (allocated.find(child) == allocated.end() || child->markEpoch == currentEpoch)
+					if (!isAllocated(child) || child->markEpoch == currentEpoch)
 						continue;
 					child->markEpoch = currentEpoch;
 					pending.push_back(child);
@@ -268,12 +267,17 @@ namespace cppgc
 			}
 		}
 
+		bool isAllocated(GCObjectPtr object) const noexcept
+		{
+			return object && allocated.find(object) != allocated.end();
+		}
+
 		size_t configuredMinimumThreshold;
 		size_t nextCollectionThreshold;
 		std::thread::id ownerThread;
 		State state = State::idle;
 		uint64_t currentEpoch = 0;
-		std::set<GCObjectRootPtrBase*> roots;
+		std::unordered_set<GCObjectRootPtrBase*> roots;
 		std::unordered_set<GCObjectPtr> allocated;
 	};
 }
