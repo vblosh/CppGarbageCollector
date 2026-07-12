@@ -13,177 +13,6 @@
 
 using namespace cppgc;
 
-class Foo : public GCObject
-{
-    DECLARE_GCOBJECT_CLASS(Foo)
-public:
-    Foo(int id)
-        : pFoo(this), id(id)
-    {}
-
-    virtual ~Foo()
-    {}
-
-    GCMember<Foo> pFoo;
-    int id;
-};
-
-GCOBJECT_POINTER_MAP_BEGIN(Foo)
-GCPOINTER(Foo, pFoo)
-GCOBJECT_POINTER_MAP_END(Foo)
-
-class Boo : public Foo
-{
-    DECLARE_GCOBJECT_CLASS(Boo)
-public:
-    Boo(int id, char ch)
-        : Foo(id), ch(ch), pBoo(this)
-    {}
-
-    char ch;
-    GCMember<Boo> pBoo;
-};
-
-GCOBJECT_POINTER_MAP_BEGIN(Boo)
-GCPOINTER(Boo, pBoo)
-GCOBJECT_POINTER_MAP_WITH_PARENT_END(Boo, Foo)
-
-class NoAncestor : public GCObject
-{
-    DECLARE_GCOBJECT_CLASS_NO_PTR(NoAncestor)
-};
-
-IMPLEMENT_GCOBJECT_CLASS_NO_PTR(NoAncestor)
-
-class ChildOfNoAncestor : public NoAncestor
-{
-    DECLARE_GCOBJECT_CLASS(ChildOfNoAncestor)
-public:
-    ChildOfNoAncestor() : child(this)
-    {}
-
-    void setChild(Foo* value)
-    {
-        child = value;
-    }
-
-private:
-    GCMember<Foo> child;
-};
-
-GCOBJECT_POINTER_MAP_BEGIN(ChildOfNoAncestor)
-GCPOINTER(ChildOfNoAncestor, child)
-GCOBJECT_POINTER_MAP_WITH_PARENT_END(ChildOfNoAncestor, NoAncestor)
-
-class ThrowingObject : public GCObject
-{
-    DECLARE_GCOBJECT_CLASS_NO_PTR(ThrowingObject)
-public:
-    ThrowingObject()
-    {
-        throw std::runtime_error("constructor failure");
-    }
-};
-
-IMPLEMENT_GCOBJECT_CLASS_NO_PTR(ThrowingObject)
-
-class LegacyRawNode : public GCObject
-{
-    DECLARE_GCOBJECT_CLASS(LegacyRawNode)
-public:
-    LegacyRawNode() : next(nullptr)
-    {}
-
-    LegacyRawNode* next;
-};
-
-GCOBJECT_POINTER_MAP_BEGIN(LegacyRawNode)
-GCPOINTER(LegacyRawNode, next)
-GCOBJECT_POINTER_MAP_END(LegacyRawNode)
-
-class ConstructorEdgeObject : public GCObject
-{
-    DECLARE_GCOBJECT_CLASS(ConstructorEdgeObject)
-public:
-    explicit ConstructorEdgeObject(Foo* child) : child(this, child)
-    {}
-
-private:
-    GCMember<Foo> child;
-};
-
-GCOBJECT_POINTER_MAP_BEGIN(ConstructorEdgeObject)
-GCPOINTER(ConstructorEdgeObject, child)
-GCOBJECT_POINTER_MAP_END(ConstructorEdgeObject)
-
-class ReentrantObject : public GCObject
-{
-    DECLARE_GCOBJECT_CLASS_NO_PTR(ReentrantObject)
-public:
-    ReentrantObject(GarbageCollector& collector, bool& rejected)
-        : collector(collector), rejected(rejected)
-    {}
-
-    ~ReentrantObject() override
-    {
-        try
-        {
-            collector.collect();
-        }
-        catch (const std::logic_error&)
-        {
-            rejected = true;
-        }
-    }
-
-private:
-    GarbageCollector& collector;
-    bool& rejected;
-};
-
-IMPLEMENT_GCOBJECT_CLASS_NO_PTR(ReentrantObject)
-
-class GraphNode : public GCObject
-{
-    DECLARE_GCOBJECT_CLASS(GraphNode)
-public:
-    GraphNode() : first(this), second(this)
-    {}
-
-    GCMember<GraphNode> first;
-    GCMember<GraphNode> second;
-};
-
-GCOBJECT_POINTER_MAP_BEGIN(GraphNode)
-GCPOINTER(GraphNode, first)
-GCPOINTER(GraphNode, second)
-GCOBJECT_POINTER_MAP_END(GraphNode)
-
-class ThrowingTraceObject : public GCObject
-{
-public:
-    const ClassInfo* getClassInfo() const override
-    {
-        return &classInfo;
-    }
-
-    static void trace(GCObjectPtr, GCPointerList&)
-    {
-        if (shouldThrow)
-        {
-            shouldThrow = false;
-            throw std::runtime_error("trace failure");
-        }
-    }
-
-    static bool shouldThrow;
-    static const ClassInfo classInfo;
-};
-
-bool ThrowingTraceObject::shouldThrow = false;
-const ClassInfo ThrowingTraceObject::classInfo{
-    sizeof(ThrowingTraceObject), alignof(ThrowingTraceObject), &ThrowingTraceObject::trace, nullptr };
-
 static_assert(!std::is_copy_constructible_v<GarbageCollector>);
 static_assert(!std::is_copy_assignable_v<GarbageCollector>);
 static_assert(!std::is_move_constructible_v<GarbageCollector>);
@@ -333,10 +162,33 @@ TEST(GCTEST, rejectsUseFromAnotherThread)
         {
             rejected = true;
         }
+        // Exercise new thread enforcement on const getters + owns (post-polish)
+        try { (void)gc.get_objects_count(); } catch (const std::logic_error&) { rejected = true; }
+        try { (void)gc.get_collection_threshold(); } catch (const std::logic_error&) { rejected = true; }
+        try { (void)gc.get_next_collection_threshold(); } catch (const std::logic_error&) { rejected = true; }
+        try { (void)gc.owns(nullptr); } catch (const std::logic_error&) { rejected = true; }
     });
     worker.join();
 
     ASSERT_TRUE(rejected);
+}
+
+TEST(GCTEST, zeroRegistrationClassWorks)
+{
+    // Minimal "zero boiler" class: only derives + trace override, no ClassInfo/Get/getClassInfo.
+    // Exercises the primary simplification (non-pure getClassInfo default + virtual trace only).
+    struct Zero : public GCObject {
+        void trace(GCPointerList& /*pointers*/) const override {}
+    };
+    GarbageCollector gc;
+    GCObjectRootPtr<Zero> root(gc);
+    root = gc.createInstance<Zero>();
+    ASSERT_EQ(1, gc.get_objects_count());
+    gc.collect();
+    ASSERT_EQ(1, gc.get_objects_count());
+    root.reset();
+    gc.collect();
+    ASSERT_EQ(0, gc.get_objects_count());
 }
 
 TEST(GCTEST, collectionThresholdTriggersBeforeAllocation)
@@ -529,6 +381,21 @@ TEST(GCOBJECT, headerMetadataIsSharedAcrossTranslationUnits)
 {
     ASSERT_EQ(HeaderDefinedNode::GetClassInfo(),
         getHeaderDefinedNodeInfoFromOtherTranslationUnit());
+
+    // Exercise HeaderDefinedNode's trace() (and self-GCMember) at runtime under the virtual protocol.
+    // (The multi-TU test itself only checked metadata pointer sharing; this covers the trace path
+    // defined in the shared header.)
+    GarbageCollector gc;
+    GCObjectRootPtr<HeaderDefinedNode> root(gc);
+    auto* node = gc.createInstance<HeaderDefinedNode>();
+    root = node;
+    // Its ctor wires 'next' to self; assign another to exercise trace push
+    node->next = gc.createInstance<HeaderDefinedNode>();
+    gc.collect();
+    ASSERT_EQ(2, gc.get_objects_count());
+    root.reset();
+    gc.collect();
+    ASSERT_EQ(0, gc.get_objects_count());
 }
 
 int main(int argc, char** argv) 
