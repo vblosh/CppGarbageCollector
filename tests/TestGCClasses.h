@@ -9,20 +9,15 @@ public:
     static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 
-    HeaderDefinedNode() : next(this)
+    HeaderDefinedNode() : next(*this)
     {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
-    }
 
     cppgc::GCMember<HeaderDefinedNode> next;
 };
 
 const cppgc::ClassInfo* getHeaderDefinedNodeInfoFromOtherTranslationUnit();
 
-// --- Test helper classes (moved here for better organization; all use new virtual trace) ---
+// Test helper classes for ownership, tracing, and runtime type behavior.
 
 class Foo : public cppgc::GCObject
 {
@@ -32,13 +27,8 @@ public:
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 
     Foo(int id)
-        : pFoo(this), id(id)
+        : pFoo(*this), id(id)
     {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(pFoo));
-    }
 
     cppgc::GCMember<Foo> pFoo;
     int id;
@@ -52,14 +42,8 @@ public:
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 
     Boo(int id, char ch)
-        : Foo(id), ch(ch), pBoo(this)
+        : Foo(id), ch(ch), pBoo(*this)
     {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(pBoo));
-        Foo::trace(pointers);
-    }
 
     char ch;
     cppgc::GCMember<Boo> pBoo;
@@ -80,17 +64,12 @@ public:
     static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 
-    ChildOfNoAncestor() : child(this)
+    ChildOfNoAncestor() : child(*this)
     {}
 
     void setChild(Foo* value)
     {
         child = value;
-    }
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(child));
     }
 
 private:
@@ -120,7 +99,7 @@ public:
     LegacyRawNode() : next(nullptr)
     {}
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void traceAdditional(cppgc::GCPointerList& pointers) const override
     {
         pointers.push_back(cppgc::getGCObjectPointer(next));
     }
@@ -135,13 +114,8 @@ public:
     static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 
-    explicit ConstructorEdgeObject(Foo* child) : child(this, child)
+    explicit ConstructorEdgeObject(Foo* child) : child(*this, child)
     {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(child));
-    }
 
 private:
     cppgc::GCMember<Foo> child;
@@ -182,14 +156,8 @@ public:
     static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 
-    GraphNode() : first(this), second(this)
+    GraphNode() : first(*this), second(*this)
     {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(first));
-        pointers.push_back(cppgc::getGCObjectPointer(second));
-    }
 
     cppgc::GCMember<GraphNode> first;
     cppgc::GCMember<GraphNode> second;
@@ -202,9 +170,8 @@ public:
     static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void traceAdditional(cppgc::GCPointerList&) const override
     {
-        (void)pointers;  // unused (throws before using)
         if (shouldThrow)
         {
             shouldThrow = false;

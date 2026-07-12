@@ -16,9 +16,9 @@ It does not inspect the native stack or automatically discover ordinary pointers
 
 ## Basic usage
 
-Define a managed type by deriving from `cppgc::GCObject`. Prefer
-`cppgc::GCMember<T>` for references between managed objects. Override the
-virtual `trace` method and push managed pointers using `getGCObjectPointer`:
+Define a managed type by deriving from `cppgc::GCObject`. Use
+`cppgc::GCMember<T>` for references between managed objects; each member
+registers itself with its containing object automatically:
 
 ```cpp
 #include "GarbageCollector.h"
@@ -27,25 +27,20 @@ class Node : public cppgc::GCObject
 {
 public:
     explicit Node(int value)
-        : next(this), value(value)
+        : next(*this), value(value)
     {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
-    }
 
     cppgc::GCMember<Node> next;
     int value;
 };
 ```
 
-The `this` passed to `GCMember` ctor associates the member with its containing
-object for ownership checks. Once that object belongs to a collector,
+The `*this` passed to the `GCMember` constructor registers the member with its
+containing object and enables ownership checks. Once that object belongs to a collector,
 `GCMember<T>` rejects assignments to objects owned by a different collector.
 
-**Inheritance tracing**: always call `Base::trace(pointers);` from your `trace`
-override when the base declares managed pointers.
+Base-class and derived-class `GCMember` fields register in the same intrusive
+member list, so inherited edges are traced automatically without base calls.
 
 Create objects through `GarbageCollector::createInstance()` and keep externally
 reachable objects in `GCObjectRootPtr<T>` roots:
@@ -78,7 +73,7 @@ When `collect()` is called:
 
 1. Every registered root is placed in an iterative work list.
 2. Reachable objects are marked with the current collection epoch.
-3. The `trace` overrides add child objects to the work list (call base `trace` for inherited members).
+3. Registered `GCMember` fields add child objects to the work list.
 4. Objects not marked in the current epoch are removed from the ownership set.
 5. Unreachable objects are destroyed.
 
@@ -115,12 +110,11 @@ does not access a dead collector.
 ## Managed members
 
 `GCMember<T>` supports pointer assignment, `get()`, `operator->`, Boolean tests,
-and `reset()`. It is intentionally not copyable because copying it would also
-copy the identity of its containing object.
+and `reset()`. It is intentionally not copyable or movable because its address
+is linked into its containing object's member registry.
 
-Every managed pointer (GCMember or raw) must be explicitly pushed via
-`getGCObjectPointer` inside your `trace` override. C++17 has no standard
-reflection mechanism that lets the collector find members automatically.
+`GCMember` fields require no tracing override. The containing `GCObject` is also
+non-copyable and non-movable so registered member addresses remain stable.
 
 Raw pointer members remain supported for compatibility:
 
@@ -130,16 +124,22 @@ class LegacyNode : public cppgc::GCObject
 public:
     LegacyNode* next = nullptr;
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void traceAdditional(cppgc::GCPointerList& pointers) const override
     {
         pointers.push_back(cppgc::getGCObjectPointer(next));
     }
 };
 ```
 
-Raw members cannot reject cross-collector assignments. During tracing, foreign
+Raw members cannot register or reject cross-collector assignments automatically.
+They must be pushed explicitly from `traceAdditional()`. During tracing, foreign
 or stale raw edges are ignored because membership is checked before the target
 is dereferenced. Prefer `GCMember<T>` for new code.
+
+If both a base and derived class override `traceAdditional()`, the derived
+override must call `Base::traceAdditional(pointers)` to preserve the base's
+legacy raw edges. This rule does not apply to `GCMember` fields, which are
+registered automatically across the complete object.
 
 Edges assigned inside an object's constructor are validated after the object is
 registered. If any initial edge points outside the collector, creation rolls back
@@ -147,9 +147,8 @@ and throws `std::invalid_argument`.
 
 ## Pointer-free and inherited types
 
-**Normal usage requires zero registration beyond `trace`**: when a class has
-no managed pointers, simply derive from `GCObject` and do not override `trace`
-(the base empty impl is sufficient). No ClassInfo needed.
+When a class has no managed pointers, simply derive from `GCObject`. No tracing
+override or `ClassInfo` registration is needed.
 
 **Only if you use runtime type queries** (`isTypeOf<T>`, `isSubclassOf`,
 `isSameType`, or `T::GetClassInfo()` for multi-TU tests), supply a minimal
@@ -165,7 +164,7 @@ public:
 };
 ```
 
-For derived types that need the queries, set parent and call base trace (if any):
+For derived types that need the queries, set the metadata parent:
 
 ```cpp
 class Derived : public Parent
@@ -174,18 +173,11 @@ public:
     static inline const cppgc::ClassInfo classInfo{ Parent::GetClassInfo() };
     static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
     virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        // push own members using getGCObjectPointer
-        Parent::trace(pointers);
-    }
 };
 ```
 
-ClassInfo is only for the is* queries + inheritance metadata chain. The primary
-tracing is always via the virtual `trace` (standard C++, no macros).
-See tests for full examples.
+`ClassInfo` is only for the `is*` queries and their inheritance metadata chain;
+it is unrelated to managed-member tracing. See the tests for full examples.
 
 ## Automatic collection threshold
 
@@ -253,8 +245,8 @@ from a registered root.
 
 ## Limitations
 
-- No conservative stack scanning: reachability comes only from registered roots
-  and declared members in `trace` overrides.
+- No conservative stack scanning: reachability comes only from registered roots,
+  automatic `GCMember` edges, and raw edges declared through `traceAdditional()`.
 - No moving or compacting collection.
 - No concurrent or parallel collection.
 - No weak-reference or finalizer API.

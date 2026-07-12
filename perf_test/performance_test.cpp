@@ -14,14 +14,8 @@ class Node : public GCObject
 {
 public:
     Node(Typ val)
-        : left(this), right(this), value(val)
+        : left(*this), right(*this), value(val)
     {
-    }
-
-    void trace(GCPointerList& pointers) const override
-    {
-        pointers.push_back(getGCObjectPointer(left));
-        pointers.push_back(getGCObjectPointer(right));
     }
 
     GCMember<Node> left;

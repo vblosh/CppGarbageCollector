@@ -225,8 +225,15 @@ namespace cppgc
 
 		void traceDirectEdges(GCObjectPtr object, GCPointerList& pointers) const
 		{
-			if (object)
-				object->trace(pointers);
+			if (!object)
+				return;
+
+			for (GCMemberBase* member = object->firstMember; member; member = member->next)
+			{
+				if (member->target)
+					pointers.push_back(member->target);
+			}
+			object->traceAdditional(pointers);
 		}
 
 		void validateDirectEdges(GCObjectPtr object) const

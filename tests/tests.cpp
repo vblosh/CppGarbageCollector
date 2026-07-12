@@ -17,6 +17,10 @@ static_assert(!std::is_copy_constructible_v<GarbageCollector>);
 static_assert(!std::is_copy_assignable_v<GarbageCollector>);
 static_assert(!std::is_move_constructible_v<GarbageCollector>);
 static_assert(!std::is_move_assignable_v<GarbageCollector>);
+static_assert(!std::is_copy_constructible_v<GCObject>);
+static_assert(!std::is_copy_assignable_v<GCObject>);
+static_assert(!std::is_move_constructible_v<GCObject>);
+static_assert(!std::is_move_assignable_v<GCObject>);
 
 TEST(GCTEST, testRoots1)
 {
@@ -47,7 +51,7 @@ TEST(GCTEST, testCyclicRefs1)
     ASSERT_EQ(0, gc.get_objects_count());
 }
 
-TEST(GCTEST, testTree1)
+TEST(GCTEST, automaticTracingIncludesBaseAndDerivedMembers)
 {
     GarbageCollector gc;
     GCObjectRootPtr<Boo> root11(gc);
@@ -151,7 +155,11 @@ TEST(GCTEST, collectionRecoversAfterTraceFailure)
 TEST(GCTEST, rejectsUseFromAnotherThread)
 {
     GarbageCollector gc;
-    bool rejected = false;
+    bool collectRejected = false;
+    bool countRejected = false;
+    bool configuredThresholdRejected = false;
+    bool nextThresholdRejected = false;
+    bool ownsRejected = false;
     std::thread worker([&]
     {
         try
@@ -160,26 +168,25 @@ TEST(GCTEST, rejectsUseFromAnotherThread)
         }
         catch (const std::logic_error&)
         {
-            rejected = true;
+            collectRejected = true;
         }
-        // Exercise new thread enforcement on const getters + owns (post-polish)
-        try { (void)gc.get_objects_count(); } catch (const std::logic_error&) { rejected = true; }
-        try { (void)gc.get_collection_threshold(); } catch (const std::logic_error&) { rejected = true; }
-        try { (void)gc.get_next_collection_threshold(); } catch (const std::logic_error&) { rejected = true; }
-        try { (void)gc.owns(nullptr); } catch (const std::logic_error&) { rejected = true; }
+        try { (void)gc.get_objects_count(); } catch (const std::logic_error&) { countRejected = true; }
+        try { (void)gc.get_collection_threshold(); } catch (const std::logic_error&) { configuredThresholdRejected = true; }
+        try { (void)gc.get_next_collection_threshold(); } catch (const std::logic_error&) { nextThresholdRejected = true; }
+        try { (void)gc.owns(nullptr); } catch (const std::logic_error&) { ownsRejected = true; }
     });
     worker.join();
 
-    ASSERT_TRUE(rejected);
+    ASSERT_TRUE(collectRejected);
+    ASSERT_TRUE(countRejected);
+    ASSERT_TRUE(configuredThresholdRejected);
+    ASSERT_TRUE(nextThresholdRejected);
+    ASSERT_TRUE(ownsRejected);
 }
 
 TEST(GCTEST, zeroRegistrationClassWorks)
 {
-    // Minimal "zero boiler" class: only derives + trace override, no ClassInfo/Get/getClassInfo.
-    // Exercises the primary simplification (non-pure getClassInfo default + virtual trace only).
-    struct Zero : public GCObject {
-        void trace(GCPointerList& /*pointers*/) const override {}
-    };
+    struct Zero : public GCObject {};
     GarbageCollector gc;
     GCObjectRootPtr<Zero> root(gc);
     root = gc.createInstance<Zero>();
@@ -382,14 +389,12 @@ TEST(GCOBJECT, headerMetadataIsSharedAcrossTranslationUnits)
     ASSERT_EQ(HeaderDefinedNode::GetClassInfo(),
         getHeaderDefinedNodeInfoFromOtherTranslationUnit());
 
-    // Exercise HeaderDefinedNode's trace() (and self-GCMember) at runtime under the virtual protocol.
-    // (The multi-TU test itself only checked metadata pointer sharing; this covers the trace path
-    // defined in the shared header.)
+    // Exercise automatic intrusive tracing for a class defined in a shared header.
     GarbageCollector gc;
     GCObjectRootPtr<HeaderDefinedNode> root(gc);
     auto* node = gc.createInstance<HeaderDefinedNode>();
     root = node;
-    // Its ctor wires 'next' to self; assign another to exercise trace push
+    // Assign another node to exercise automatic member discovery.
     node->next = gc.createInstance<HeaderDefinedNode>();
     gc.collect();
     ASSERT_EQ(2, gc.get_objects_count());
