@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "GarbageCollector.h"
-#include "GCPerfTest.h"
 #include "TestGCClasses.h"
 
 using namespace cppgc;

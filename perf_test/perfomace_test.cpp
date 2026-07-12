@@ -5,7 +5,6 @@
 #include <iomanip>
 
 #include "GarbageCollector.h"
-#include "GCPerfTest.h"
 
 using Typ = double;
 
