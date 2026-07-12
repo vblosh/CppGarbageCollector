@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include "GarbageCollector.h"
 
 class HeaderDefinedNode : public cppgc::GCObject
@@ -161,6 +163,25 @@ public:
 
     cppgc::GCMember<GraphNode> first;
     cppgc::GCMember<GraphNode> second;
+};
+
+class DynamicMemberOwner : public cppgc::GCObject
+{
+public:
+    void addEdges(Foo* firstTarget, Foo* secondTarget)
+    {
+        first = std::make_unique<cppgc::GCMember<Foo>>(*this, firstTarget);
+        second = std::make_unique<cppgc::GCMember<Foo>>(*this, secondTarget);
+    }
+
+    void removeFirstEdge()
+    {
+        first.reset();
+    }
+
+private:
+    std::unique_ptr<cppgc::GCMember<Foo>> first;
+    std::unique_ptr<cppgc::GCMember<Foo>> second;
 };
 
 class ThrowingTraceObject : public cppgc::GCObject

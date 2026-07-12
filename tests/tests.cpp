@@ -288,6 +288,26 @@ TEST(GCTEST, randomizedGraphCollectsUnreachableComponent)
     ASSERT_EQ(componentSize, gc.get_objects_count());
 }
 
+TEST(GCTEST, removingMemberOutOfRegistrationOrderUpdatesTracing)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<DynamicMemberOwner> root(gc);
+    root = gc.createInstance<DynamicMemberOwner>();
+    Foo* firstTarget = gc.createInstance<Foo>(1);
+    Foo* secondTarget = gc.createInstance<Foo>(2);
+    root->addEdges(firstTarget, secondTarget);
+
+    gc.collect();
+    ASSERT_EQ(3, gc.get_objects_count());
+
+    root->removeFirstEdge();
+    gc.collect();
+
+    ASSERT_EQ(2, gc.get_objects_count());
+    ASSERT_FALSE(gc.owns(firstTarget));
+    ASSERT_TRUE(gc.owns(secondTarget));
+}
+
 TEST(GCTEST, marksDeepGraphsWithoutCallStackRecursion)
 {
     constexpr int nodeCount = 100000;
