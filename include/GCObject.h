@@ -59,19 +59,17 @@ namespace cppgc
 		explicit GCMemberBase(GCObject& containingObject) noexcept
 			: owner(&containingObject), next(containingObject.firstMember)
 		{
-			if (next)
-				next->previous = this;
 			containingObject.firstMember = this;
 		}
 
 		~GCMemberBase()
 		{
-			if (previous)
-				previous->next = next;
-			else
-				owner->firstMember = next;
-			if (next)
-				next->previous = previous;
+			// Save one pointer per member; dynamic unlink scans the owner's list.
+			auto link = &owner->firstMember;
+			while (*link && *link != this)
+				link = &(*link)->next;
+			if (*link)
+				*link = next;
 		}
 
 		GCMemberBase(const GCMemberBase&) = delete;
@@ -84,7 +82,6 @@ namespace cppgc
 
 	private:
 		GCMemberBase* next;
-		GCMemberBase* previous = nullptr;
 	};
 
 	template<class T>

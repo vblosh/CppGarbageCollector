@@ -116,6 +116,11 @@ is linked into its containing object's member registry.
 `GCMember` fields require no tracing override. The containing `GCObject` is also
 non-copyable and non-movable so registered member addresses remain stable.
 
+The member registry is singly linked. Each member stores its owner, target, and
+next-member pointers (24 bytes on 64-bit builds). Removing a dynamically owned
+member scans its owner's list, so removal is O(n) in the number of members on
+that object.
+
 Raw pointer members remain supported for compatibility:
 
 ```cpp

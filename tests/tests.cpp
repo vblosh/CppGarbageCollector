@@ -21,6 +21,7 @@ static_assert(!std::is_copy_constructible_v<GCObject>);
 static_assert(!std::is_copy_assignable_v<GCObject>);
 static_assert(!std::is_move_constructible_v<GCObject>);
 static_assert(!std::is_move_assignable_v<GCObject>);
+static_assert(sizeof(GCMember<Foo>) == 3 * sizeof(void*));
 
 TEST(GCTEST, testRoots1)
 {

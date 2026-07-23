@@ -58,6 +58,9 @@ int performanceTest()
     Typ sum = 0;
 
     std::cout << "Performance test started\n";
+    std::cout << "sizeof(Node)=" << sizeof(Node)
+              << " sizeof(GCObject)=" << sizeof(GCObject)
+              << " sizeof(GCMember<Node>)=" << sizeof(GCMember<Node>) << '\n';
     std::chrono::duration<double> elapsed;
 
     std::vector<double> data(NUM_INS);
