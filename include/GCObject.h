@@ -18,17 +18,6 @@ namespace cppgc
 	using GCObjectPtr = GCObject*;
 	using GCPointerList = std::vector<GCObjectPtr>;
 
-	struct ClassInfo
-	{
-		const ClassInfo* parentInfo;
-	};
-
-	// NOTE: Most users need *no* ClassInfo registration.
-	// GCMember fields register automatically; override traceAdditional() only for raw edges.
-	// If you use the is* free functions (isTypeOf<T>, isSubclassOf, isSameType)
-	// or rely on GetClassInfo() for multi-TU identity, provide a minimal
-	// static registration in your class (see README "Pointer-free and inherited types").
-
 	class GCObject
 	{
 	public:
@@ -44,8 +33,6 @@ namespace cppgc
 		// Override only for legacy raw pointers or custom non-GCMember edges.
 		// Derived overrides must call the base hook when the base traces such edges.
 		virtual void traceAdditional(GCPointerList&) const {}
-
-		virtual const ClassInfo* getClassInfo() const { return nullptr; }
 
 	private:
 		friend class GarbageCollector;
@@ -176,39 +163,6 @@ namespace cppgc
 		return static_cast<GCObjectPtr>(pointer.get());
 	}
 
-	inline bool isSubclassOf(const GCObject* descendant, const GCObject* ancestor)
-	{
-		if (!descendant || !ancestor)
-			return false;
-
-		const ClassInfo* currentInfo = descendant->getClassInfo();
-		const ClassInfo* ancestorInfo = ancestor->getClassInfo();
-		if (!currentInfo || !ancestorInfo)
-			return false;
-		do
-		{
-			if (currentInfo == ancestorInfo)
-				return true;
-			currentInfo = currentInfo->parentInfo;
-		} while (currentInfo);
-		return false;
-	}
-
-	inline bool isSameType(const GCObject* left, const GCObject* right)
-	{
-		if (!left || !right)
-			return false;
-		const ClassInfo* li = left->getClassInfo();
-		const ClassInfo* ri = right->getClassInfo();
-		return li && ri && li == ri;
-	}
-
-	template<typename T>
-	bool isTypeOf(const GCObject* object)
-	{
-		const ClassInfo* ti = T::GetClassInfo();
-		return object && ti && ti == object->getClassInfo();
-	}
 }
 
 #endif // GUARD_GCOBJECT_H

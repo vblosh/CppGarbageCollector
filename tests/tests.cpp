@@ -338,89 +338,17 @@ TEST(GCTEST, constructorFailureDoesNotRegisterObject)
     ASSERT_EQ(0, gc.get_objects_count());
 }
 
-TEST(GCOBJECT, isSubclassTrue)
+TEST(GCOBJECT, managedMemberCanDeriveFromPointerFreeClass)
 {
     GarbageCollector gc;
-    ASSERT_TRUE(isSubclassOf(gc.createInstance<Foo>(1), gc.createInstance<Foo>(1)));
-    ASSERT_TRUE(isSubclassOf(gc.createInstance<Boo>(1, 'a'), gc.createInstance<Foo>(1)));
-}
-
-TEST(GCOBJECT, isSubclassFalse)
-{
-    GarbageCollector gc;
-    ASSERT_FALSE(isSubclassOf(gc.createInstance<NoAncestor>(), gc.createInstance<Foo>(1)));
-}
-
-TEST(GCOBJECT, isSameTypeTrue)
-{
-    GarbageCollector gc;
-    ASSERT_TRUE(isSameType(gc.createInstance<Foo>(2), gc.createInstance<Foo>(1)));
-}
-
-TEST(GCOBJECT, isSameTypeFalse)
-{
-    GarbageCollector gc;
-    ASSERT_FALSE(isSameType(gc.createInstance<NoAncestor>(), gc.createInstance<Foo>(1)));
-}
-
-TEST(GCOBJECT, isTypeOfTrue)
-{
-    GarbageCollector gc;
-    ASSERT_TRUE(isTypeOf<Foo>(gc.createInstance<Foo>(1)));
-}
-
-TEST(GCOBJECT, isTypeOfFalse)
-{
-    GarbageCollector gc;
-    ASSERT_FALSE(isTypeOf<Boo>(gc.createInstance<Foo>(1)));
-}
-
-TEST(GCOBJECT, pointerFreeClassSupportsIsTypeOf)
-{
-    GarbageCollector gc;
-    ASSERT_TRUE(isTypeOf<NoAncestor>(gc.createInstance<NoAncestor>()));
-}
-
-TEST(GCOBJECT, pointerClassCanDeriveFromPointerFreeClass)
-{
-    GarbageCollector gc;
-    GCObjectRootPtr<ChildOfNoAncestor> root(gc);
-    auto* child = gc.createInstance<ChildOfNoAncestor>();
-    auto* parent = gc.createInstance<NoAncestor>();
+    GCObjectRootPtr<ChildWithMember> root(gc);
+    auto* child = gc.createInstance<ChildWithMember>();
+    gc.createInstance<PointerFreeBase>();
     root = child;
     child->setChild(gc.createInstance<Foo>(1));
 
-    ASSERT_TRUE(isSubclassOf(child, parent));
-    ASSERT_TRUE(isTypeOf<ChildOfNoAncestor>(child));
-
     gc.collect();
     ASSERT_EQ(2, gc.get_objects_count());
-}
-
-TEST(GCOBJECT, nullTypeQueriesAreSafe)
-{
-    ASSERT_FALSE(isSubclassOf(nullptr, nullptr));
-    ASSERT_FALSE(isSameType(nullptr, nullptr));
-    ASSERT_FALSE(isTypeOf<Foo>(nullptr));
-}
-
-TEST(GCOBJECT, headerMetadataIsSharedAcrossTranslationUnits)
-{
-    ASSERT_EQ(HeaderDefinedNode::GetClassInfo(),
-        getHeaderDefinedNodeInfoFromOtherTranslationUnit());
-
-    // Exercise automatic intrusive tracing for a class defined in a shared header.
-    GarbageCollector gc;
-    GCObjectRootPtr<HeaderDefinedNode> root(gc);
-    auto* node = gc.createInstance<HeaderDefinedNode>();
-    root = node;
-    // Assign another node to exercise automatic member discovery.
-    node->next = gc.createInstance<HeaderDefinedNode>();
-    gc.collect();
-    ASSERT_EQ(2, gc.get_objects_count());
-    root.reset();
-    gc.collect();
-    ASSERT_EQ(0, gc.get_objects_count());
 }
 
 int main(int argc, char** argv) 

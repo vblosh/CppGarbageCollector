@@ -148,36 +148,17 @@ and throws `std::invalid_argument`.
 ## Pointer-free and inherited types
 
 When a class has no managed pointers, simply derive from `GCObject`. No tracing
-override or `ClassInfo` registration is needed.
-
-**Only if you use runtime type queries** (`isTypeOf<T>`, `isSubclassOf`,
-`isSameType`, or `T::GetClassInfo()` for multi-TU tests), supply a minimal
-static ClassInfo registration (C++17 inline statics allow header use):
+override or registration is needed:
 
 ```cpp
 class ValueObject : public cppgc::GCObject
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-};
+{};
 ```
 
-For derived types that need the queries, set the metadata parent:
-
-```cpp
-class Derived : public Parent
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ Parent::GetClassInfo() };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-};
-```
-
-`ClassInfo` is only for the `is*` queries and their inheritance metadata chain;
-it is unrelated to managed-member tracing. See the tests for full examples.
+A derived class can add `GCMember` fields normally. Their registration works
+across the complete object, including when the base class has no managed fields.
+Use standard C++ RTTI (`dynamic_cast` or `typeid`) if runtime type queries are
+needed.
 
 ## Automatic collection threshold
 
@@ -295,4 +276,4 @@ cmake -S . -B build \
 The repository's CI builds and tests with both GCC and Clang sanitizers. The
 unit suite covers cycles, deep graphs, root and collector lifetimes,
 cross-collector references, reentrancy, thread affinity, thresholds, exception
-recovery, inherited metadata, randomized graphs, and multi-translation-unit use.
+recovery, inherited managed members, and randomized graphs.

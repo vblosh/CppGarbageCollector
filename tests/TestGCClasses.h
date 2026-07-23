@@ -4,30 +4,11 @@
 
 #include "GarbageCollector.h"
 
-class HeaderDefinedNode : public cppgc::GCObject
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    HeaderDefinedNode() : next(*this)
-    {}
-
-    cppgc::GCMember<HeaderDefinedNode> next;
-};
-
-const cppgc::ClassInfo* getHeaderDefinedNodeInfoFromOtherTranslationUnit();
-
-// Test helper classes for ownership, tracing, and runtime type behavior.
+// Test helper classes for ownership and tracing behavior.
 
 class Foo : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     Foo(int id)
         : pFoo(*this), id(id)
     {}
@@ -39,10 +20,6 @@ public:
 class Boo : public Foo
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ Foo::GetClassInfo() };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     Boo(int id, char ch)
         : Foo(id), ch(ch), pBoo(*this)
     {}
@@ -51,22 +28,13 @@ public:
     cppgc::GCMember<Boo> pBoo;
 };
 
-class NoAncestor : public cppgc::GCObject
+class PointerFreeBase : public cppgc::GCObject
+{};
+
+class ChildWithMember : public PointerFreeBase
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-};
-
-class ChildOfNoAncestor : public NoAncestor
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ NoAncestor::GetClassInfo() };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    ChildOfNoAncestor() : child(*this)
+    ChildWithMember() : child(*this)
     {}
 
     void setChild(Foo* value)
@@ -81,10 +49,6 @@ private:
 class ThrowingObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     ThrowingObject()
     {
         throw std::runtime_error("constructor failure");
@@ -94,10 +58,6 @@ public:
 class LegacyRawNode : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     LegacyRawNode() : next(nullptr)
     {}
 
@@ -112,10 +72,6 @@ public:
 class ConstructorEdgeObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     explicit ConstructorEdgeObject(Foo* child) : child(*this, child)
     {}
 
@@ -126,10 +82,6 @@ private:
 class ReentrantObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     ReentrantObject(cppgc::GarbageCollector& collector, bool& rejected)
         : collector(collector), rejected(rejected)
     {}
@@ -154,10 +106,6 @@ private:
 class GraphNode : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     GraphNode() : first(*this), second(*this)
     {}
 
@@ -187,10 +135,6 @@ private:
 class ThrowingTraceObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     void traceAdditional(cppgc::GCPointerList&) const override
     {
         if (shouldThrow)
