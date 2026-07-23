@@ -21,7 +21,8 @@ static_assert(!std::is_copy_constructible_v<GCObject>);
 static_assert(!std::is_copy_assignable_v<GCObject>);
 static_assert(!std::is_move_constructible_v<GCObject>);
 static_assert(!std::is_move_assignable_v<GCObject>);
-static_assert(sizeof(GCMember<Foo>) == 3 * sizeof(void*));
+static_assert(sizeof(GCMember<Foo>) == sizeof(void*));
+static_assert(std::is_trivially_copyable_v<GCMember<Foo>>);
 
 TEST(GCTEST, testRoots1)
 {
@@ -52,7 +53,7 @@ TEST(GCTEST, testCyclicRefs1)
     ASSERT_EQ(0, gc.get_objects_count());
 }
 
-TEST(GCTEST, automaticTracingIncludesBaseAndDerivedMembers)
+TEST(GCTEST, explicitTracingIncludesBaseAndDerivedMembers)
 {
     GarbageCollector gc;
     GCObjectRootPtr<Boo> root11(gc);
@@ -90,15 +91,21 @@ TEST(GCTEST, rejectsRootFromAnotherCollector)
     ASSERT_TRUE(root.empty());
 }
 
-TEST(GCTEST, rejectsManagedEdgeFromAnotherCollector)
+TEST(GCTEST, detectsManagedEdgeFromAnotherCollectorDuringCollection)
 {
     GarbageCollector first;
     GarbageCollector second;
     GCObjectRootPtr<Foo> root(first);
     root = first.createInstance<Foo>(1);
+    Foo* foreign = second.createInstance<Foo>(2);
 
-    ASSERT_THROW(root->pFoo = second.createInstance<Foo>(2), std::invalid_argument);
-    ASSERT_EQ(nullptr, root->pFoo.get());
+    ASSERT_NO_THROW(root->pFoo = foreign);
+    ASSERT_EQ(foreign, root->pFoo.get());
+    ASSERT_THROW(first.collect(), std::invalid_argument);
+
+    root->pFoo.reset();
+    ASSERT_NO_THROW(first.collect());
+    ASSERT_EQ(1, first.get_objects_count());
 }
 
 TEST(GCTEST, validatesEdgesCreatedByConstructors)
@@ -324,7 +331,7 @@ TEST(GCTEST, registryRemainsConsistentAfterRepeatedSweepsAndAllocations)
 	}
 }
 
-TEST(GCTEST, removingMemberOutOfRegistrationOrderUpdatesTracing)
+TEST(GCTEST, removingDynamicMemberStopsTracingItsTarget)
 {
     GarbageCollector gc;
     GCObjectRootPtr<DynamicMemberOwner> root(gc);

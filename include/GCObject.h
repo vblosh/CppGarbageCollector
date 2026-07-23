@@ -1,9 +1,7 @@
 #ifndef GUARD_GCOBJECT_H
 #define GUARD_GCOBJECT_H
 
-#include <cstddef>
 #include <cstdint>
-#include <stdexcept>
 #include <type_traits>
 #include <vector>
 
@@ -11,12 +9,39 @@ namespace cppgc
 {
 	class GarbageCollector;
 	class GCObject;
-	class GCMemberBase;
 	template<class T>
 	class GCMember;
 
 	using GCObjectPtr = GCObject*;
 	using GCPointerList = std::vector<GCObjectPtr>;
+
+	class TraceVisitor
+	{
+	public:
+		template<class T>
+		void visit(const GCMember<T>& member) const;
+
+		template<class T>
+		void visitRaw(T* pointer) const;
+
+	private:
+		using Callback = void (*)(void*, GCObjectPtr);
+
+		friend class GarbageCollector;
+
+		TraceVisitor(
+			void* context,
+			Callback managedCallback,
+			Callback rawCallback) noexcept
+			: context(context),
+			managedCallback(managedCallback),
+			rawCallback(rawCallback)
+		{}
+
+		void* context;
+		Callback managedCallback;
+		Callback rawCallback;
+	};
 
 	class GCObject
 	{
@@ -30,89 +55,46 @@ namespace cppgc
 		// Sweep order is unspecified; destructors must not dereference managed peers.
 		virtual ~GCObject() = default;
 
-		// Override only for legacy raw pointers or custom non-GCMember edges.
-		// Derived overrides must call the base hook when the base traces such edges.
-		virtual void traceAdditional(GCPointerList&) const {}
+		// Visit every GCMember. Derived overrides must call the base implementation
+		// when the base declares managed or legacy raw edges.
+		virtual void trace(TraceVisitor&) const {}
 
 	private:
 		friend class GarbageCollector;
-		friend class GCMemberBase;
-		template<class T>
-		friend class GCMember;
 
-		GCMemberBase* firstMember = nullptr;
 		const void* collectorIdentity = nullptr;
 		uint64_t markEpoch = 0;
-
-		bool hasCollectorIdentity() const noexcept { return collectorIdentity != nullptr; }
-		bool sharesCollectorIdentity(const GCObject* other) const noexcept
-		{
-			return other && collectorIdentity == other->collectorIdentity;
-		}
-	};
-
-	class GCMemberBase
-	{
-		friend class GarbageCollector;
-
-	protected:
-		explicit GCMemberBase(GCObject& containingObject) noexcept
-			: owner(&containingObject), next(containingObject.firstMember)
-		{
-			containingObject.firstMember = this;
-		}
-
-		~GCMemberBase()
-		{
-			// Save one pointer per member; dynamic unlink scans the owner's list.
-			auto link = &owner->firstMember;
-			while (*link && *link != this)
-				link = &(*link)->next;
-			if (*link)
-				*link = next;
-		}
-
-		GCMemberBase(const GCMemberBase&) = delete;
-		GCMemberBase& operator=(const GCMemberBase&) = delete;
-		GCMemberBase(GCMemberBase&&) = delete;
-		GCMemberBase& operator=(GCMemberBase&&) = delete;
-
-		GCObject* owner;
-		GCObject* target = nullptr;
-
-	private:
-		GCMemberBase* next;
 	};
 
 	template<class T>
-	class GCMember : private GCMemberBase
+	class GCMember
 	{
 	public:
-		explicit GCMember(GCObject& containingObject) noexcept
-			: GCMemberBase(containingObject)
+		GCMember() noexcept
 		{
 			static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
 		}
 
-		GCMember(GCObject& containingObject, T* initialValue)
-			: GCMemberBase(containingObject)
+		explicit GCMember(T* initialValue) noexcept
+			: target(initialValue)
 		{
 			static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
-			assign(initialValue);
 		}
 
-		GCMember(const GCMember&) = delete;
-		GCMember& operator=(const GCMember&) = delete;
+		GCMember(const GCMember&) noexcept = default;
+		GCMember& operator=(const GCMember&) noexcept = default;
+		GCMember(GCMember&&) noexcept = default;
+		GCMember& operator=(GCMember&&) noexcept = default;
 
-		GCMember& operator=(T* newValue)
+		GCMember& operator=(T* newValue) noexcept
 		{
-			assign(newValue);
+			target = newValue;
 			return *this;
 		}
 
 		T* get() const noexcept
 		{
-			return static_cast<T*>(target);
+			return target;
 		}
 
 		T* operator->() const noexcept
@@ -136,17 +118,21 @@ namespace cppgc
 		}
 
 	private:
-		void assign(T* newValue)
-		{
-			GCObject* newTarget = static_cast<GCObject*>(newValue);
-			if (newTarget && owner && owner->hasCollectorIdentity() &&
-				!owner->sharesCollectorIdentity(newTarget))
-			{
-				throw std::invalid_argument("managed edge crosses collector ownership");
-			}
-			target = newTarget;
-		}
+		T* target = nullptr;
 	};
+
+	template<class T>
+	void TraceVisitor::visit(const GCMember<T>& member) const
+	{
+		managedCallback(context, static_cast<GCObjectPtr>(member.get()));
+	}
+
+	template<class T>
+	void TraceVisitor::visitRaw(T* pointer) const
+	{
+		static_assert(std::is_base_of_v<GCObject, T>, "raw edge type must derive from GCObject");
+		rawCallback(context, static_cast<GCObjectPtr>(pointer));
+	}
 
 	template<class T>
 	GCObjectPtr getGCObjectPointer(T* pointer)
@@ -159,7 +145,6 @@ namespace cppgc
 	{
 		return static_cast<GCObjectPtr>(pointer.get());
 	}
-
 }
 
 #endif // GUARD_GCOBJECT_H

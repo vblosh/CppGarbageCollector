@@ -395,28 +395,58 @@ namespace cppgc
 				configuredMinimumThreshold, allocated.size());
 		}
 
-		void traceDirectEdges(GCObjectPtr object, GCPointerList& pointers) const
+		struct ValidationTraceContext
 		{
-			if (!object)
-				return;
+			const GarbageCollector* collector;
+		};
 
-			for (GCMemberBase* member = object->firstMember; member; member = member->next)
+		static void validateTracedEdge(void* opaqueContext, GCObjectPtr pointer)
+		{
+			auto& context = *static_cast<ValidationTraceContext*>(opaqueContext);
+			if (pointer && !context.collector->isAllocated(pointer))
 			{
-				if (member->target)
-					pointers.push_back(member->target);
+				throw std::invalid_argument("managed object has an edge outside its collector");
 			}
-			object->traceAdditional(pointers);
 		}
 
 		void validateDirectEdges(GCObjectPtr object) const
 		{
-			GCPointerList pointers;
-			traceDirectEdges(object, pointers);
-			for (auto pointer : pointers)
+			ValidationTraceContext context{ this };
+			TraceVisitor visitor{ &context, validateTracedEdge, validateTracedEdge };
+			object->trace(visitor);
+		}
+
+		struct MarkTraceContext
+		{
+			GarbageCollector* collector;
+			GCPointerList* pending;
+		};
+
+		static void markManagedEdge(void* opaqueContext, GCObjectPtr child)
+		{
+			auto& context = *static_cast<MarkTraceContext*>(opaqueContext);
+			if (!child)
+				return;
+			if (!context.collector->isAllocated(child))
 			{
-				if (pointer && !isAllocated(pointer))
-					throw std::invalid_argument("managed object has an edge outside its collector");
+				throw std::invalid_argument("managed edge points outside its collector");
 			}
+			if (child->markEpoch == context.collector->currentEpoch)
+				return;
+			child->markEpoch = context.collector->currentEpoch;
+			context.pending->push_back(child);
+		}
+
+		static void markRawEdge(void* opaqueContext, GCObjectPtr child)
+		{
+			auto& context = *static_cast<MarkTraceContext*>(opaqueContext);
+			if (!context.collector->isAllocated(child) ||
+				child->markEpoch == context.collector->currentEpoch)
+			{
+				return;
+			}
+			child->markEpoch = context.collector->currentEpoch;
+			context.pending->push_back(child);
 		}
 
 		void markReachable(GCObjectPtr root)
@@ -425,7 +455,8 @@ namespace cppgc
 				return;
 
 			GCPointerList pending;
-			GCPointerList children;
+			MarkTraceContext context{ this, &pending };
+			TraceVisitor visitor{ &context, markManagedEdge, markRawEdge };
 			root->markEpoch = currentEpoch;
 			pending.push_back(root);
 
@@ -433,29 +464,7 @@ namespace cppgc
 			{
 				GCObjectPtr node = pending.back();
 				pending.pop_back();
-
-				for (GCMemberBase* member = node->firstMember; member; member = member->next)
-				{
-					GCObjectPtr child = member->target;
-					// Managed-member assignments guarantee a valid same-collector target.
-					if (!child || child->collectorIdentity != this ||
-						child->markEpoch == currentEpoch)
-					{
-						continue;
-					}
-					child->markEpoch = currentEpoch;
-					pending.push_back(child);
-				}
-
-				children.clear();
-				node->traceAdditional(children);
-				for (auto child : children)
-				{
-					if (!isAllocated(child) || child->markEpoch == currentEpoch)
-						continue;
-					child->markEpoch = currentEpoch;
-					pending.push_back(child);
-				}
+				node->trace(visitor);
 			}
 		}
 

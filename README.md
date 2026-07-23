@@ -17,8 +17,8 @@ It does not inspect the native stack or automatically discover ordinary pointers
 ## Basic usage
 
 Define a managed type by deriving from `cppgc::GCObject`. Use
-`cppgc::GCMember<T>` for references between managed objects; each member
-registers itself with its containing object automatically:
+`cppgc::GCMember<T>` for references between managed objects and enumerate those
+members in a `trace()` override:
 
 ```cpp
 #include "GarbageCollector.h"
@@ -27,20 +27,25 @@ class Node : public cppgc::GCObject
 {
 public:
     explicit Node(int value)
-        : next(*this), value(value)
+        : value(value)
     {}
+
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        visitor.visit(next);
+    }
 
     cppgc::GCMember<Node> next;
     int value;
 };
 ```
 
-The `*this` passed to the `GCMember` constructor registers the member with its
-containing object and enables ownership checks. Once that object belongs to a collector,
-`GCMember<T>` rejects assignments to objects owned by a different collector.
+`GCMember<T>` contains only its target pointer. Assignments are therefore plain
+pointer stores. The collector validates managed targets when an object is created
+and whenever its edges are traced.
 
-Base-class and derived-class `GCMember` fields register in the same intrusive
-member list, so inherited edges are traced automatically without base calls.
+If a base class declares managed edges, derived `trace()` overrides must call
+`Base::trace(visitor)` before visiting their own members.
 
 Create objects through `GarbageCollector::createInstance()` and keep externally
 reachable objects in `GCObjectRootPtr<T>` roots:
@@ -73,7 +78,7 @@ When `collect()` is called:
 
 1. Every registered root is placed in an iterative work list.
 2. Reachable objects are marked with the current collection epoch.
-3. Registered `GCMember` fields add child objects to the work list.
+3. Each object's `trace()` override visits its managed and legacy raw edges.
 4. Objects not marked in the current epoch are removed from the ownership set.
 5. Unreachable objects are destroyed.
 
@@ -110,16 +115,16 @@ does not access a dead collector.
 ## Managed members
 
 `GCMember<T>` supports pointer assignment, `get()`, `operator->`, Boolean tests,
-and `reset()`. It is intentionally not copyable or movable because its address
-is linked into its containing object's member registry.
+and `reset()`. It is a trivially copyable, pointer-sized value.
 
-`GCMember` fields require no tracing override. The containing `GCObject` is also
-non-copyable and non-movable so registered member addresses remain stable.
+Each `GCMember` stores only its target pointer (8 bytes on 64-bit builds). There
+is no intrusive per-object member registry; tracing metadata is declared once
+per class in `trace()`.
 
-The member registry is singly linked. Each member stores its owner, target, and
-next-member pointers (24 bytes on 64-bit builds). Removing a dynamically owned
-member scans its owner's list, so removal is O(n) in the number of members on
-that object.
+Because a target-only member does not know its containing object, assigning a
+foreign or stale target does not throw immediately. The next `collect()` detects
+the invalid managed edge before dereferencing it, throws `std::invalid_argument`,
+and leaves the collector usable after the edge is reset.
 
 Raw pointer members remain supported for compatibility:
 
@@ -129,22 +134,20 @@ class LegacyNode : public cppgc::GCObject
 public:
     LegacyNode* next = nullptr;
 
-    void traceAdditional(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
+        visitor.visitRaw(next);
     }
 };
 ```
 
-Raw members cannot register or reject cross-collector assignments automatically.
-They must be pushed explicitly from `traceAdditional()`. During tracing, foreign
+Raw members cannot reject cross-collector assignments automatically. They must
+be passed explicitly to `visitor.visitRaw()`. During tracing, foreign
 or stale raw edges are ignored because membership is checked before the target
 is dereferenced. Prefer `GCMember<T>` for new code.
 
-If both a base and derived class override `traceAdditional()`, the derived
-override must call `Base::traceAdditional(pointers)` to preserve the base's
-legacy raw edges. This rule does not apply to `GCMember` fields, which are
-registered automatically across the complete object.
+If both a base and derived class override `trace()`, the derived override must
+call `Base::trace(visitor)` to preserve all base-class edges.
 
 Edges assigned inside an object's constructor are validated after the object is
 registered. If any initial edge points outside the collector, creation rolls back
@@ -153,17 +156,17 @@ and throws `std::invalid_argument`.
 ## Pointer-free and inherited types
 
 When a class has no managed pointers, simply derive from `GCObject`. No tracing
-override or registration is needed:
+override is needed:
 
 ```cpp
 class ValueObject : public cppgc::GCObject
 {};
 ```
 
-A derived class can add `GCMember` fields normally. Their registration works
-across the complete object, including when the base class has no managed fields.
-Use standard C++ RTTI (`dynamic_cast` or `typeid`) if runtime type queries are
-needed.
+A derived class can add `GCMember` fields normally and visit them in its
+`trace()` override. Call the base implementation only when the base also traces
+edges. Use standard C++ RTTI (`dynamic_cast` or `typeid`) if runtime type queries
+are needed.
 
 ## Automatic collection threshold
 
@@ -232,12 +235,12 @@ from a registered root.
 ## Limitations
 
 - No conservative stack scanning: reachability comes only from registered roots,
-  automatic `GCMember` edges, and raw edges declared through `traceAdditional()`.
+  and edges declared through `trace()`.
 - No moving or compacting collection.
 - No concurrent or parallel collection.
 - No weak-reference or finalizer API.
 - No automatic byte-based heap limit; the optional threshold counts objects.
-- The ownership hash set adds per-object allocation and lookup overhead.
+- The ownership registry adds per-object storage and lookup overhead.
 - Manually deleting an object returned by `createInstance()` is invalid and can
   cause a later double deletion.
 

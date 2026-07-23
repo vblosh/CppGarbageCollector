@@ -14,8 +14,14 @@ class Node : public GCObject
 {
 public:
     Node(Typ val)
-        : left(*this), right(*this), value(val)
+        : value(val)
     {
+    }
+
+    void trace(TraceVisitor& visitor) const override
+    {
+        visitor.visit(left);
+        visitor.visit(right);
     }
 
     GCMember<Node> left;

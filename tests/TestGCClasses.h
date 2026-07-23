@@ -10,8 +10,13 @@ class Foo : public cppgc::GCObject
 {
 public:
     Foo(int id)
-        : pFoo(*this), id(id)
+        : id(id)
     {}
+
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        visitor.visit(pFoo);
+    }
 
     cppgc::GCMember<Foo> pFoo;
     int id;
@@ -21,8 +26,14 @@ class Boo : public Foo
 {
 public:
     Boo(int id, char ch)
-        : Foo(id), ch(ch), pBoo(*this)
+        : Foo(id), ch(ch)
     {}
+
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        Foo::trace(visitor);
+        visitor.visit(pBoo);
+    }
 
     char ch;
     cppgc::GCMember<Boo> pBoo;
@@ -34,15 +45,17 @@ class PointerFreeBase : public cppgc::GCObject
 class ChildWithMember : public PointerFreeBase
 {
 public:
-    ChildWithMember() : child(*this)
-    {}
-
     void setChild(Foo* value)
     {
         child = value;
     }
 
 private:
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        visitor.visit(child);
+    }
+
     cppgc::GCMember<Foo> child;
 };
 
@@ -61,9 +74,9 @@ public:
     LegacyRawNode() : next(nullptr)
     {}
 
-    void traceAdditional(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
+        visitor.visitRaw(next);
     }
 
     LegacyRawNode* next;
@@ -72,10 +85,15 @@ public:
 class ConstructorEdgeObject : public cppgc::GCObject
 {
 public:
-    explicit ConstructorEdgeObject(Foo* child) : child(*this, child)
+    explicit ConstructorEdgeObject(Foo* child) : child(child)
     {}
 
 private:
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        visitor.visit(child);
+    }
+
     cppgc::GCMember<Foo> child;
 };
 
@@ -106,8 +124,11 @@ private:
 class GraphNode : public cppgc::GCObject
 {
 public:
-    GraphNode() : first(*this), second(*this)
-    {}
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        visitor.visit(first);
+        visitor.visit(second);
+    }
 
     cppgc::GCMember<GraphNode> first;
     cppgc::GCMember<GraphNode> second;
@@ -118,8 +139,8 @@ class DynamicMemberOwner : public cppgc::GCObject
 public:
     void addEdges(Foo* firstTarget, Foo* secondTarget)
     {
-        first = std::make_unique<cppgc::GCMember<Foo>>(*this, firstTarget);
-        second = std::make_unique<cppgc::GCMember<Foo>>(*this, secondTarget);
+        first = std::make_unique<cppgc::GCMember<Foo>>(firstTarget);
+        second = std::make_unique<cppgc::GCMember<Foo>>(secondTarget);
     }
 
     void removeFirstEdge()
@@ -128,6 +149,14 @@ public:
     }
 
 private:
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        if (first)
+            visitor.visit(*first);
+        if (second)
+            visitor.visit(*second);
+    }
+
     std::unique_ptr<cppgc::GCMember<Foo>> first;
     std::unique_ptr<cppgc::GCMember<Foo>> second;
 };
@@ -135,7 +164,7 @@ private:
 class ThrowingTraceObject : public cppgc::GCObject
 {
 public:
-    void traceAdditional(cppgc::GCPointerList&) const override
+    void trace(cppgc::TraceVisitor&) const override
     {
         if (shouldThrow)
         {
