@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <stdexcept>
@@ -11,6 +12,7 @@
 #include <type_traits>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "GCObject.h"
 #include "IRootsRegistry.h"
@@ -21,6 +23,172 @@ namespace cppgc
 	namespace detail
 	{
 		inline constexpr size_t minimumThresholdGrowth = 1024;
+
+		class PointerRegistry
+		{
+		public:
+			bool insert(GCObjectPtr pointer)
+			{
+				if (!pointer)
+					return false;
+				ensureInsertCapacity();
+
+				const size_t mask = slots.size() - 1;
+				size_t index = hashPointer(pointer) & mask;
+				size_t firstDeleted = slots.size();
+				for (;;)
+				{
+					switch (states[index])
+					{
+					case SlotState::empty:
+						if (firstDeleted != slots.size())
+							index = firstDeleted;
+						slots[index] = pointer;
+						states[index] = SlotState::occupied;
+						++objectCount;
+						if (firstDeleted != slots.size())
+							--deletedCount;
+						return true;
+					case SlotState::occupied:
+						if (slots[index] == pointer)
+							return false;
+						break;
+					case SlotState::deleted:
+						if (firstDeleted == slots.size())
+							firstDeleted = index;
+						break;
+					}
+					index = (index + 1) & mask;
+				}
+			}
+
+			bool erase(GCObjectPtr pointer) noexcept
+			{
+				if (!pointer || slots.empty())
+					return false;
+
+				const size_t mask = slots.size() - 1;
+				size_t index = hashPointer(pointer) & mask;
+				for (;;)
+				{
+					if (states[index] == SlotState::empty)
+						return false;
+					if (states[index] == SlotState::occupied && slots[index] == pointer)
+					{
+						slots[index] = nullptr;
+						states[index] = SlotState::deleted;
+						--objectCount;
+						++deletedCount;
+						return true;
+					}
+					index = (index + 1) & mask;
+				}
+			}
+
+			bool contains(GCObjectPtr pointer) const noexcept
+			{
+				if (!pointer || slots.empty())
+					return false;
+
+				const size_t mask = slots.size() - 1;
+				size_t index = hashPointer(pointer) & mask;
+				for (;;)
+				{
+					if (states[index] == SlotState::empty)
+						return false;
+					if (states[index] == SlotState::occupied && slots[index] == pointer)
+						return true;
+					index = (index + 1) & mask;
+				}
+			}
+
+			void clear() noexcept
+			{
+				slots.clear();
+				states.clear();
+				objectCount = 0;
+				deletedCount = 0;
+			}
+
+		private:
+			enum class SlotState : uint8_t
+			{
+				empty,
+				occupied,
+				deleted
+			};
+
+			static constexpr size_t initialCapacity = 8;
+
+			static size_t hashPointer(GCObjectPtr pointer) noexcept
+			{
+				size_t value = std::hash<GCObjectPtr>{}(pointer);
+				if constexpr (sizeof(size_t) >= sizeof(uint64_t))
+				{
+					value ^= value >> 33;
+					value *= static_cast<size_t>(0xff51afd7ed558ccdULL);
+					value ^= value >> 33;
+					value *= static_cast<size_t>(0xc4ceb9fe1a85ec53ULL);
+					value ^= value >> 33;
+				}
+				else
+				{
+					value ^= value >> 16;
+					value *= static_cast<size_t>(0x7feb352dU);
+					value ^= value >> 15;
+					value *= static_cast<size_t>(0x846ca68bU);
+					value ^= value >> 16;
+				}
+				return value;
+			}
+
+			void ensureInsertCapacity()
+			{
+				if (slots.empty())
+					return rehash(initialCapacity);
+
+				const size_t usedSlots = objectCount + deletedCount;
+				const size_t maximumUsedSlots = slots.size() - slots.size() / 4;
+				if (usedSlots + 1 <= maximumUsedSlots)
+					return;
+
+				if (objectCount + 1 <= maximumUsedSlots)
+					return rehash(slots.size());
+
+				if (slots.size() > std::numeric_limits<size_t>::max() / 2)
+					throw std::length_error("managed-object registry is too large");
+				rehash(slots.size() * 2);
+			}
+
+			void rehash(size_t capacity)
+			{
+				std::vector<GCObjectPtr> newSlots(capacity, nullptr);
+				std::vector<SlotState> newStates(capacity, SlotState::empty);
+				const size_t mask = capacity - 1;
+
+				for (size_t index = 0; index < slots.size(); ++index)
+				{
+					if (states[index] != SlotState::occupied)
+						continue;
+
+					GCObjectPtr pointer = slots[index];
+					size_t newIndex = hashPointer(pointer) & mask;
+					while (newStates[newIndex] == SlotState::occupied)
+						newIndex = (newIndex + 1) & mask;
+					newSlots[newIndex] = pointer;
+					newStates[newIndex] = SlotState::occupied;
+				}
+
+				slots.swap(newSlots);
+				states.swap(newStates);
+				deletedCount = 0;
+			}
+
+			std::vector<GCObjectPtr> slots;
+			std::vector<SlotState> states;
+			size_t objectCount = 0;
+			size_t deletedCount = 0;
+		};
 
 		inline size_t calculateNextCollectionThreshold(
 			size_t configuredMinimumThreshold, size_t liveObjects) noexcept
@@ -59,6 +227,7 @@ namespace cppgc
 			roots.clear();
 
 			auto objects = std::move(allocated);
+			allocatedRegistry.clear();
 			for (auto ptr : objects)
 			{
 				ptr->collectorIdentity = nullptr;
@@ -100,17 +269,19 @@ namespace cppgc
 			T* ptr = object.get();
 			ptr->collectorIdentity = this;
 
-			const auto result = allocated.insert(ptr);
-			if (!result.second)
+			if (!allocatedRegistry.insert(ptr))
 				throw std::logic_error("duplicate managed object address");
 
 			try
 			{
+				allocated.push_back(ptr);
 				validateDirectEdges(ptr);
 			}
 			catch (...)
 			{
-				allocated.erase(ptr);
+				if (!allocated.empty() && allocated.back() == ptr)
+					allocated.pop_back();
+				allocatedRegistry.erase(ptr);
 				ptr->collectorIdentity = nullptr;
 				throw;
 			}
@@ -131,20 +302,21 @@ namespace cppgc
 				for (auto root : roots)
 					markReachable(root->get());
 
-				GCPointerList garbage;
-				garbage.reserve(allocated.size());
+				size_t liveCount = 0;
 				for (auto ptr : allocated)
 				{
-					if (ptr->markEpoch != currentEpoch)
-						garbage.push_back(ptr);
+					if (ptr->markEpoch == currentEpoch)
+					{
+						allocated[liveCount++] = ptr;
+					}
+					else
+					{
+						allocatedRegistry.erase(ptr);
+						ptr->collectorIdentity = nullptr;
+						delete ptr;  // state remains 'collecting' during sweep (per original design)
+					}
 				}
-
-				for (auto ptr : garbage)
-				{
-					allocated.erase(ptr);
-					ptr->collectorIdentity = nullptr;
-					delete ptr;  // state remains 'collecting' during sweep (per original design)
-				}
+				allocated.resize(liveCount);
 
 				updateNextCollectionThreshold();
 			}
@@ -262,8 +434,21 @@ namespace cppgc
 				GCObjectPtr node = pending.back();
 				pending.pop_back();
 
+				for (GCMemberBase* member = node->firstMember; member; member = member->next)
+				{
+					GCObjectPtr child = member->target;
+					// Managed-member assignments guarantee a valid same-collector target.
+					if (!child || child->collectorIdentity != this ||
+						child->markEpoch == currentEpoch)
+					{
+						continue;
+					}
+					child->markEpoch = currentEpoch;
+					pending.push_back(child);
+				}
+
 				children.clear();
-				traceDirectEdges(node, children);
+				node->traceAdditional(children);
 				for (auto child : children)
 				{
 					if (!isAllocated(child) || child->markEpoch == currentEpoch)
@@ -276,7 +461,7 @@ namespace cppgc
 
 		bool isAllocated(GCObjectPtr object) const noexcept
 		{
-			return object && allocated.find(object) != allocated.end();
+			return allocatedRegistry.contains(object);
 		}
 
 		size_t configuredMinimumThreshold;
@@ -285,7 +470,8 @@ namespace cppgc
 		State state = State::idle;
 		uint64_t currentEpoch = 0;
 		std::unordered_set<GCObjectRootPtrBase*> roots;
-		std::unordered_set<GCObjectPtr> allocated;
+		std::vector<GCObjectPtr> allocated;
+		detail::PointerRegistry allocatedRegistry;
 	};
 }
 

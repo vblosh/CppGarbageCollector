@@ -285,7 +285,42 @@ TEST(GCTEST, randomizedGraphCollectsUnreachableComponent)
     root = nodes.front();
     gc.collect();
 
-    ASSERT_EQ(componentSize, gc.get_objects_count());
+	ASSERT_EQ(componentSize, gc.get_objects_count());
+}
+
+TEST(GCTEST, registryRemainsConsistentAfterRepeatedSweepsAndAllocations)
+{
+	constexpr int liveCount = 2000;
+	constexpr int garbagePerRound = 4000;
+	GarbageCollector gc;
+	GCObjectRootPtr<Foo> root(gc);
+	root = gc.createInstance<Foo>(0);
+	Foo* tail = root.get();
+	for (int id = 1; id < liveCount; ++id)
+	{
+		tail->pFoo = gc.createInstance<Foo>(id);
+		tail = tail->pFoo.get();
+	}
+
+	for (int round = 0; round < 3; ++round)
+	{
+		std::vector<Foo*> garbage;
+		garbage.reserve(garbagePerRound);
+		for (int id = 0; id < garbagePerRound; ++id)
+		{
+			Foo* object = gc.createInstance<Foo>(id);
+			garbage.push_back(object);
+			ASSERT_TRUE(gc.owns(object));
+		}
+
+		gc.collect();
+
+		ASSERT_EQ(liveCount, gc.get_objects_count());
+		ASSERT_TRUE(gc.owns(root.get()));
+		ASSERT_TRUE(gc.owns(tail));
+		for (auto pointer : garbage)
+			ASSERT_FALSE(gc.owns(pointer));
+	}
 }
 
 TEST(GCTEST, removingMemberOutOfRegistrationOrderUpdatesTracing)
