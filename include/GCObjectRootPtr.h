@@ -76,6 +76,11 @@ namespace cppgc
 			return pObject;
 		}
 
+		IRootsRegistry* registry() const noexcept
+		{
+			return rootsRegistry;
+		}
+
 		void detachRegistry(const IRootsRegistry* registry) noexcept
 		{
 			if (rootsRegistry == registry)
@@ -120,6 +125,11 @@ namespace cppgc
 		T* get() const noexcept
 		{
 			return static_cast<T*>(pObject);
+		}
+
+		IRootsRegistry* registry() const noexcept
+		{
+			return GCObjectRootPtrBase::registry();
 		}
 	};
 }

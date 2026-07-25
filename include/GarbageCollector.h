@@ -17,6 +17,7 @@
 #include "GCObject.h"
 #include "IRootsRegistry.h"
 #include "GCObjectRootPtr.h"
+#include "GCObjectWeakPtr.h"
 
 namespace cppgc
 {
@@ -226,6 +227,10 @@ namespace cppgc
 				root->detachRegistry(this);
 			roots.clear();
 
+			for (auto weak : weaks)
+				weak->detachRegistry(this);
+			weaks.clear();
+
 			auto objects = std::move(allocated);
 			allocatedRegistry.clear();
 			for (auto ptr : objects)
@@ -246,6 +251,19 @@ namespace cppgc
 		{
 			ensureOwnerThread();
 			roots.erase(root);
+		}
+
+		void addWeak(GCObjectWeakPtrBase* weak) override
+		{
+			ensureOwnerThread();
+			ensureIdle("register a weak pointer");
+			weaks.insert(weak);
+		}
+
+		void removeWeak(GCObjectWeakPtrBase* weak) override
+		{
+			ensureOwnerThread();
+			weaks.erase(weak);
 		}
 
 		bool owns(const GCObject* object) const override
@@ -301,6 +319,8 @@ namespace cppgc
 				advanceEpoch();
 				for (auto root : roots)
 					markReachable(root->get());
+
+				clearDeadWeakPointers();
 
 				size_t liveCount = 0;
 				for (auto ptr : allocated)
@@ -468,6 +488,16 @@ namespace cppgc
 			}
 		}
 
+		void clearDeadWeakPointers() noexcept
+		{
+			for (auto weak : weaks)
+			{
+				GCObjectPtr object = weak->get();
+				if (object && object->markEpoch != currentEpoch)
+					weak->reset();
+			}
+		}
+
 		bool isAllocated(GCObjectPtr object) const noexcept
 		{
 			return allocatedRegistry.contains(object);
@@ -479,6 +509,7 @@ namespace cppgc
 		State state = State::idle;
 		uint64_t currentEpoch = 0;
 		std::unordered_set<GCObjectRootPtrBase*> roots;
+		std::unordered_set<GCObjectWeakPtrBase*> weaks;
 		std::vector<GCObjectPtr> allocated;
 		detail::PointerRegistry allocatedRegistry;
 	};

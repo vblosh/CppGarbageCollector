@@ -394,6 +394,167 @@ TEST(GCOBJECT, managedMemberCanDeriveFromPointerFreeClass)
     ASSERT_EQ(2, gc.get_objects_count());
 }
 
+TEST(GCTEST, weakPointerDoesNotKeepObjectAlive)
+{
+    GarbageCollector gc;
+    GCObjectWeakPtr<Foo> weak(gc);
+    weak = gc.createInstance<Foo>(1);
+
+    ASSERT_FALSE(weak.empty());
+    ASSERT_EQ(1, gc.get_objects_count());
+
+    gc.collect();
+
+    ASSERT_TRUE(weak.empty());
+    ASSERT_TRUE(weak.expired());
+    ASSERT_EQ(nullptr, weak.get());
+    ASSERT_EQ(0, gc.get_objects_count());
+}
+
+TEST(GCTEST, weakPointerSurvivesWhileObjectIsRooted)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    GCObjectWeakPtr<Foo> weak(gc);
+    root = gc.createInstance<Foo>(1);
+    weak = root;
+
+    ASSERT_EQ(root.get(), weak.get());
+    gc.collect();
+    ASSERT_EQ(1, gc.get_objects_count());
+    ASSERT_EQ(root.get(), weak.get());
+
+    root.reset();
+    gc.collect();
+    ASSERT_TRUE(weak.empty());
+    ASSERT_EQ(0, gc.get_objects_count());
+}
+
+TEST(GCTEST, weakPointerCanBeConstructedFromRoot)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(7);
+
+    GCObjectWeakPtr<Foo> weak(root);
+    ASSERT_EQ(root.get(), weak.get());
+    ASSERT_EQ(7, weak.get()->id);
+
+    root.reset();
+    gc.collect();
+    ASSERT_TRUE(weak.empty());
+}
+
+TEST(GCTEST, weakPointerLockPromotesToRoot)
+{
+    GarbageCollector gc;
+    GCObjectWeakPtr<Foo> weak(gc);
+    Foo* object = gc.createInstance<Foo>(3);
+    weak = object;
+
+    {
+        GCObjectRootPtr<Foo> locked = weak.lock();
+        ASSERT_EQ(object, locked.get());
+        ASSERT_EQ(3, locked->id);
+
+        weak.reset();
+        gc.collect();
+        ASSERT_EQ(1, gc.get_objects_count());
+        ASSERT_TRUE(gc.owns(object));
+    }
+
+    gc.collect();
+    ASSERT_EQ(0, gc.get_objects_count());
+}
+
+TEST(GCTEST, weakPointerLockOfEmptyReturnsEmptyRoot)
+{
+    GarbageCollector gc;
+    GCObjectWeakPtr<Foo> weak(gc);
+
+    GCObjectRootPtr<Foo> locked = weak.lock();
+    ASSERT_TRUE(locked.empty());
+}
+
+TEST(GCTEST, weakPointerCopyTracksIndependently)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(1);
+    GCObjectWeakPtr<Foo> first(root);
+    GCObjectWeakPtr<Foo> second(first);
+
+    ASSERT_EQ(first.get(), second.get());
+    first.reset();
+    ASSERT_TRUE(first.empty());
+    ASSERT_EQ(root.get(), second.get());
+
+    root.reset();
+    gc.collect();
+    ASSERT_TRUE(second.empty());
+}
+
+TEST(GCTEST, rejectsWeakPointerFromAnotherCollector)
+{
+    GarbageCollector first;
+    GarbageCollector second;
+    GCObjectWeakPtr<Foo> weak(first);
+    Foo* foreign = second.createInstance<Foo>(1);
+
+    ASSERT_THROW(weak = foreign, std::invalid_argument);
+    ASSERT_TRUE(weak.empty());
+}
+
+TEST(GCTEST, rejectsWeakAssignmentAcrossCollectors)
+{
+    GarbageCollector first;
+    GarbageCollector second;
+    GCObjectRootPtr<Foo> firstRoot(first);
+    GCObjectRootPtr<Foo> secondRoot(second);
+    firstRoot = first.createInstance<Foo>(1);
+    secondRoot = second.createInstance<Foo>(2);
+
+    GCObjectWeakPtr<Foo> weak(first);
+    weak = firstRoot;
+    ASSERT_THROW(weak = secondRoot, std::invalid_argument);
+    ASSERT_EQ(firstRoot.get(), weak.get());
+}
+
+TEST(GCTEST, weakPointerCanOutliveCollector)
+{
+    auto gc = std::make_unique<GarbageCollector>();
+    auto weak = std::make_unique<GCObjectWeakPtr<Foo>>(*gc);
+    *weak = gc->createInstance<Foo>(1);
+
+    gc.reset();
+
+    ASSERT_TRUE(weak->empty());
+    ASSERT_EQ(nullptr, weak->registry());
+    ASSERT_THROW(weak->lock(), std::logic_error);
+    ASSERT_NO_THROW(weak.reset());
+}
+
+TEST(GCTEST, weakPointerDoesNotKeepCycleAlive)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(1);
+    root->pFoo = gc.createInstance<Foo>(2);
+    root->pFoo->pFoo = root.get();
+
+    GCObjectWeakPtr<Foo> weakA(gc);
+    GCObjectWeakPtr<Foo> weakB(gc);
+    weakA = root.get();
+    weakB = root->pFoo.get();
+
+    root.reset();
+    gc.collect();
+
+    ASSERT_EQ(0, gc.get_objects_count());
+    ASSERT_TRUE(weakA.empty());
+    ASSERT_TRUE(weakB.empty());
+}
+
 int main(int argc, char** argv) 
 {
 	::testing::InitGoogleTest(&argc, argv);
