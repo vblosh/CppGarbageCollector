@@ -112,6 +112,57 @@ does not access a dead collector.
 
 `GarbageCollector` itself is neither copyable nor movable.
 
+## Weak pointers
+
+`GCObjectWeakPtr<T>` is a non-owning reference to a managed object. Unlike
+`GCObjectRootPtr<T>`, it does not keep its target alive. The collector clears the
+weak pointer when the target is reclaimed:
+
+```cpp
+cppgc::GarbageCollector gc;
+cppgc::GCObjectRootPtr<Node> root(gc);
+root = gc.createInstance<Node>(1);
+
+cppgc::GCObjectWeakPtr<Node> weak(root);
+
+gc.collect();              // root keeps the node alive
+auto locked = weak.lock(); // promotes the live target to a registered root
+
+root.reset();
+locked.reset();
+gc.collect();              // the node is reclaimed and weak is cleared
+
+assert(weak.expired());
+assert(weak.get() == nullptr);
+```
+
+A weak pointer can be constructed with a collector and later assigned a managed
+pointer or root:
+
+```cpp
+cppgc::GCObjectWeakPtr<Node> weak(gc);
+weak = gc.createInstance<Node>(1);
+```
+
+Use `lock()` when the object must remain alive while it is used. It returns an
+empty `GCObjectRootPtr<T>` if the weak pointer has expired. `get()` only observes
+the current target; the returned raw pointer is not a root and may become
+dangling after a later collection.
+
+`empty()` and `expired()` both report whether the target has been cleared, and
+`reset()` clears it explicitly. Copying a weak pointer creates an independently
+registered weak pointer to the same target.
+
+Weak pointers, roots, and their targets must belong to the same collector.
+Assigning a target or weak pointer from another collector throws
+`std::invalid_argument`. A weak pointer may outlive its collector: collector
+destruction detaches and clears it, after which `lock()` throws
+`std::logic_error`.
+
+When `GCObjectWeakPtr<T>` is stored as a field of a managed object, initialize it
+with that object's collector. Do not pass weak fields to `TraceVisitor`; weak
+references intentionally do not make their targets reachable.
+
 ## Managed members
 
 `GCMember<T>` supports pointer assignment, `get()`, `operator->`, Boolean tests,
@@ -228,7 +279,8 @@ from a registered root.
 - Sweep order is unspecified. Managed destructors must not dereference other
   managed objects.
 - Raw pointers and `GCMember` values become invalid when their target is
-  collected. CppGC does not provide weak references.
+  collected. Use `GCObjectWeakPtr<T>` when a non-owning reference must be cleared
+  automatically.
 - The collector resets its internal state if tracing throws, and a later
   collection can be attempted again.
 
@@ -238,7 +290,7 @@ from a registered root.
   and edges declared through `trace()`.
 - No moving or compacting collection.
 - No concurrent or parallel collection.
-- No weak-reference or finalizer API.
+- No finalizer API.
 - No automatic byte-based heap limit; the optional threshold counts objects.
 - The ownership registry adds per-object storage and lookup overhead.
 - Manually deleting an object returned by `createInstance()` is invalid and can
@@ -283,5 +335,6 @@ cmake -S . -B build \
 
 The repository's CI builds and tests with both GCC and Clang sanitizers. The
 unit suite covers cycles, deep graphs, root and collector lifetimes,
-cross-collector references, reentrancy, thread affinity, thresholds, exception
-recovery, inherited managed members, and randomized graphs.
+cross-collector references, weak pointers, reentrancy, thread affinity,
+thresholds, exception recovery, inherited managed members, and randomized
+graphs.
