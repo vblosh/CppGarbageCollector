@@ -177,3 +177,61 @@ public:
 };
 
 inline bool ThrowingTraceObject::shouldThrow = false;
+
+class WeakAssigningDestructor : public cppgc::GCObject
+{
+public:
+    WeakAssigningDestructor(
+        cppgc::GCObjectWeakPtr<Foo>& weak,
+        bool& assignmentSucceeded)
+        : weak(weak), assignmentSucceeded(assignmentSucceeded)
+    {}
+
+    ~WeakAssigningDestructor() override
+    {
+        try
+        {
+            weak = target;
+            assignmentSucceeded = true;
+        }
+        catch (...)
+        {
+            assignmentSucceeded = false;
+        }
+    }
+
+    void setTarget(Foo* value)
+    {
+        target = value;
+    }
+
+private:
+    cppgc::GCObjectWeakPtr<Foo>& weak;
+    bool& assignmentSucceeded;
+    Foo* target = nullptr;
+};
+
+class SelfWeakNode : public cppgc::GCObject
+{
+public:
+    explicit SelfWeakNode(cppgc::IRootsRegistry& registry)
+        : self(registry)
+    {}
+
+    cppgc::GCObjectWeakPtr<SelfWeakNode> self;
+};
+
+class ForwardDeclaredWeakTarget;
+
+class ForwardDeclaredWeakOwner : public cppgc::GCObject
+{
+public:
+    explicit ForwardDeclaredWeakOwner(cppgc::IRootsRegistry& registry)
+        : target(registry)
+    {}
+
+    cppgc::GCObjectWeakPtr<ForwardDeclaredWeakTarget> target;
+};
+
+class ForwardDeclaredWeakTarget : public cppgc::GCObject
+{};

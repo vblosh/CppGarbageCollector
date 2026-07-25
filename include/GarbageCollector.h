@@ -272,6 +272,14 @@ namespace cppgc
 			return isAllocated(const_cast<GCObject*>(object));
 		}
 
+		bool acceptsWeakTarget(const GCObject* object) const override
+		{
+			ensureOwnerThread();
+			GCObjectPtr target = const_cast<GCObject*>(object);
+			return isAllocated(target)
+				&& (state != State::sweeping || target->markEpoch == currentEpoch);
+		}
+
 		template<class T, class... Args>
 		T* createInstance(Args&&... args)
 		{
@@ -321,6 +329,7 @@ namespace cppgc
 					markReachable(root->get());
 
 				clearDeadWeakPointers();
+				state = State::sweeping;
 
 				size_t liveCount = 0;
 				for (auto ptr : allocated)
@@ -380,6 +389,7 @@ namespace cppgc
 		{
 			idle,
 			collecting,
+			sweeping,
 			destroying
 		};
 

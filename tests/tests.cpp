@@ -555,6 +555,66 @@ TEST(GCTEST, weakPointerDoesNotKeepCycleAlive)
     ASSERT_TRUE(weakB.empty());
 }
 
+TEST(GCTEST, destructorAssignmentToLaterDeadObjectIsIgnored)
+{
+    GarbageCollector gc;
+    GCObjectWeakPtr<Foo> weak(gc);
+    bool assignmentSucceeded = false;
+    auto* assigning = gc.createInstance<WeakAssigningDestructor>(
+        weak, assignmentSucceeded);
+    Foo* target = gc.createInstance<Foo>(1);
+    assigning->setTarget(target);
+
+    gc.collect();
+
+    ASSERT_TRUE(assignmentSucceeded);
+    ASSERT_TRUE(weak.empty());
+    ASSERT_EQ(0, gc.get_objects_count());
+}
+
+TEST(GCTEST, destructorAssignmentToLiveObjectSurvivesSweep)
+{
+    GarbageCollector gc;
+    GCObjectWeakPtr<Foo> weak(gc);
+    GCObjectRootPtr<Foo> root(gc);
+    bool assignmentSucceeded = false;
+    auto* assigning = gc.createInstance<WeakAssigningDestructor>(
+        weak, assignmentSucceeded);
+    root = gc.createInstance<Foo>(1);
+    assigning->setTarget(root.get());
+
+    gc.collect();
+
+    ASSERT_TRUE(assignmentSucceeded);
+    ASSERT_EQ(root.get(), weak.get());
+    ASSERT_EQ(1, gc.get_objects_count());
+}
+
+TEST(GCTEST, selfReferentialWeakMemberSupportsLock)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<SelfWeakNode> root(gc);
+    root = gc.createInstance<SelfWeakNode>(gc);
+    root->self = root.get();
+
+    GCObjectRootPtr<SelfWeakNode> locked = root->self.lock();
+
+    ASSERT_EQ(root.get(), locked.get());
+}
+
+TEST(GCTEST, forwardDeclaredWeakMemberCanReferenceTarget)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<ForwardDeclaredWeakOwner> owner(gc);
+    GCObjectRootPtr<ForwardDeclaredWeakTarget> target(gc);
+    owner = gc.createInstance<ForwardDeclaredWeakOwner>(gc);
+    target = gc.createInstance<ForwardDeclaredWeakTarget>();
+
+    owner->target = target.get();
+
+    ASSERT_EQ(target.get(), owner->target.get());
+}
+
 int main(int argc, char** argv) 
 {
 	::testing::InitGoogleTest(&argc, argv);

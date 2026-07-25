@@ -47,14 +47,18 @@ namespace cppgc
 			if (rootsRegistry != rhs.rootsRegistry)
 				throw std::invalid_argument("cannot assign weak pointers from different collectors");
 
-			pObject = rhs.pObject;
-			return *this;
+			return operator=(rhs.pObject);
 		}
 
 		GCObjectWeakPtrBase& operator=(GCObjectPtr object)
 		{
 			if (object && (!rootsRegistry || !rootsRegistry->owns(object)))
 				throw std::invalid_argument("object is not owned by this weak pointer's collector");
+			if (object && !rootsRegistry->acceptsWeakTarget(object))
+			{
+				pObject = nullptr;
+				return *this;
+			}
 
 			pObject = object;
 			return *this;
@@ -98,8 +102,6 @@ namespace cppgc
 	template<class T>
 	class GCObjectWeakPtr : public GCObjectWeakPtrBase
 	{
-		static_assert(std::is_base_of_v<GCObject, T>, "weak pointer type must derive from GCObject");
-
 	public:
 		explicit GCObjectWeakPtr(IRootsRegistry& registry)
 			: GCObjectWeakPtrBase(registry)
@@ -109,9 +111,11 @@ namespace cppgc
 			: GCObjectWeakPtrBase(rhs)
 		{}
 
-		explicit GCObjectWeakPtr(const GCObjectRootPtr<T>& root)
+		template<class U>
+		explicit GCObjectWeakPtr(const GCObjectRootPtr<U>& root)
 			: GCObjectWeakPtrBase(*requireRegistry(root))
 		{
+			static_assert(std::is_same_v<U, T>, "root type must match the weak pointer type");
 			pObject = root.get();
 		}
 
@@ -121,31 +125,37 @@ namespace cppgc
 			return *this;
 		}
 
-		GCObjectWeakPtr& operator=(const GCObjectRootPtr<T>& root)
+		template<class U>
+		GCObjectWeakPtr& operator=(const GCObjectRootPtr<U>& root)
 		{
+			static_assert(std::is_same_v<U, T>, "root type must match the weak pointer type");
 			IRootsRegistry* rootRegistry = root.registry();
 			if (registry() != rootRegistry)
 				throw std::invalid_argument("cannot assign weak pointers from different collectors");
 
-			pObject = root.get();
+			GCObjectWeakPtrBase::operator=(root.get());
 			return *this;
 		}
 
 		GCObjectWeakPtr& operator=(T* object)
 		{
+			static_assert(std::is_base_of_v<GCObject, T>, "weak pointer type must derive from GCObject");
 			GCObjectWeakPtrBase::operator=(static_cast<GCObjectPtr>(object));
 			return *this;
 		}
 
 		T* get() const noexcept
 		{
+			static_assert(std::is_base_of_v<GCObject, T>, "weak pointer type must derive from GCObject");
 			return static_cast<T*>(pObject);
 		}
 
 		// Promote to a strong root if the target is still alive.
 		// Requires a live collector (the weak pointer must not be detached).
-		GCObjectRootPtr<T> lock() const
+		auto lock() const
 		{
+			static_assert(std::is_base_of_v<GCObject, T>, "weak pointer type must derive from GCObject");
+
 			IRootsRegistry* activeRegistry = registry();
 			if (!activeRegistry)
 				throw std::logic_error("cannot lock a weak pointer without a collector");
@@ -157,7 +167,8 @@ namespace cppgc
 		}
 
 	private:
-		static IRootsRegistry* requireRegistry(const GCObjectRootPtr<T>& root)
+		template<class U>
+		static IRootsRegistry* requireRegistry(const GCObjectRootPtr<U>& root)
 		{
 			IRootsRegistry* activeRegistry = root.registry();
 			if (!activeRegistry)
