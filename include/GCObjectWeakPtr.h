@@ -52,9 +52,7 @@ namespace cppgc
 
 		GCObjectWeakPtrBase& operator=(GCObjectPtr object)
 		{
-			if (object && (!rootsRegistry || !rootsRegistry->owns(object)))
-				throw std::invalid_argument("object is not owned by this weak pointer's collector");
-			if (object && !rootsRegistry->acceptsWeakTarget(object))
+			if (object && (!rootsRegistry || !rootsRegistry->acceptsWeakTarget(object)))
 			{
 				pObject = nullptr;
 				return *this;

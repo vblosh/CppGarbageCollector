@@ -280,7 +280,9 @@ namespace cppgc
 			GCObjectPtr target = const_cast<GCObject*>(object);
 			if (state == State::sweeping && sweepingDeadRegistry.contains(target))
 				return false;
-			return isAllocated(target);
+			if (!isAllocated(target))
+				throw std::invalid_argument("object is not owned by this collector");
+			return true;
 		}
 
 		template<class T, class... Args>

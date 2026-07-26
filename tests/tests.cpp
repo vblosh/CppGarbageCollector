@@ -522,6 +522,19 @@ TEST(GCTEST, weakPointerCopyTracksIndependently)
     ASSERT_TRUE(second.empty());
 }
 
+TEST(GCTEST, weakAssignmentValidatesTargetOnce)
+{
+    Foo target(1);
+    CountingWeakRegistry registry(&target);
+    GCObjectWeakPtr<Foo> weak(registry);
+
+    weak = &target;
+
+    ASSERT_EQ(&target, weak.get());
+    ASSERT_EQ(0, registry.ownsCalls);
+    ASSERT_EQ(1, registry.acceptanceCalls);
+}
+
 TEST(GCTEST, rejectsWeakPointerFromAnotherCollector)
 {
     GarbageCollector first;

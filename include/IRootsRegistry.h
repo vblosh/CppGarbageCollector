@@ -14,6 +14,7 @@ namespace cppgc
         virtual void addWeak(GCObjectWeakPtrBase* weak) = 0;
         virtual void removeWeak(GCObjectWeakPtrBase* weak) = 0;
         virtual bool owns(const GCObject* object) const = 0;
+        // Returns false only for a target that is dead during sweeping; foreign targets throw.
         virtual bool acceptsWeakTarget(const GCObject* object) const = 0;
 
         virtual ~IRootsRegistry() = default;

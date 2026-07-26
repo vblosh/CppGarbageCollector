@@ -228,6 +228,37 @@ private:
     Foo* target = nullptr;
 };
 
+class CountingWeakRegistry : public cppgc::IRootsRegistry
+{
+public:
+    explicit CountingWeakRegistry(const cppgc::GCObject* liveTarget)
+        : liveTarget(liveTarget)
+    {}
+
+    void addRoot(cppgc::GCObjectRootPtrBase*) override {}
+    void removeRoot(cppgc::GCObjectRootPtrBase*) override {}
+    void addWeak(cppgc::GCObjectWeakPtrBase*) override {}
+    void removeWeak(cppgc::GCObjectWeakPtrBase*) override {}
+
+    bool owns(const cppgc::GCObject* object) const override
+    {
+        ++ownsCalls;
+        return object == liveTarget;
+    }
+
+    bool acceptsWeakTarget(const cppgc::GCObject* object) const override
+    {
+        ++acceptanceCalls;
+        return object == liveTarget;
+    }
+
+    mutable int ownsCalls = 0;
+    mutable int acceptanceCalls = 0;
+
+private:
+    const cppgc::GCObject* liveTarget;
+};
+
 class SelfWeakNode : public cppgc::GCObject
 {
 public:
