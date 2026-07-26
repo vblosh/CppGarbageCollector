@@ -350,7 +350,7 @@ namespace cppgc
 					{
 						allocatedRegistry.erase(ptr);
 						ptr->collectorIdentity = nullptr;
-						delete ptr;  // state remains 'collecting' during sweep (per original design)
+						delete ptr;  // Destructor callbacks observe State::sweeping.
 					}
 				}
 				allocated.resize(liveCount);
