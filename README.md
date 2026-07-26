@@ -16,9 +16,9 @@ It does not inspect the native stack or automatically discover ordinary pointers
 
 ## Basic usage
 
-Define a managed type by deriving from `cppgc::GCObject`. Prefer
-`cppgc::GCMember<T>` for references between managed objects. Override the
-virtual `trace` method and push managed pointers using `getGCObjectPointer`:
+Define a managed type by deriving from `cppgc::GCObject`. Use
+`cppgc::GCMember<T>` for references between managed objects and enumerate those
+members in a `trace()` override:
 
 ```cpp
 #include "GarbageCollector.h"
@@ -27,12 +27,12 @@ class Node : public cppgc::GCObject
 {
 public:
     explicit Node(int value)
-        : next(this), value(value)
+        : value(value)
     {}
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
+        visitor.visit(next);
     }
 
     cppgc::GCMember<Node> next;
@@ -40,12 +40,12 @@ public:
 };
 ```
 
-The `this` passed to `GCMember` ctor associates the member with its containing
-object for ownership checks. Once that object belongs to a collector,
-`GCMember<T>` rejects assignments to objects owned by a different collector.
+`GCMember<T>` contains only its target pointer. Assignments are therefore plain
+pointer stores. The collector validates managed targets when an object is created
+and whenever its edges are traced.
 
-**Inheritance tracing**: always call `Base::trace(pointers);` from your `trace`
-override when the base declares managed pointers.
+If a base class declares managed edges, derived `trace()` overrides must call
+`Base::trace(visitor)` before visiting their own members.
 
 Create objects through `GarbageCollector::createInstance()` and keep externally
 reachable objects in `GCObjectRootPtr<T>` roots:
@@ -78,7 +78,7 @@ When `collect()` is called:
 
 1. Every registered root is placed in an iterative work list.
 2. Reachable objects are marked with the current collection epoch.
-3. The `trace` overrides add child objects to the work list (call base `trace` for inherited members).
+3. Each object's `trace()` override visits its managed and legacy raw edges.
 4. Objects not marked in the current epoch are removed from the ownership set.
 5. Unreachable objects are destroyed.
 
@@ -112,15 +112,70 @@ does not access a dead collector.
 
 `GarbageCollector` itself is neither copyable nor movable.
 
+## Weak pointers
+
+`GCObjectWeakPtr<T>` is a non-owning reference to a managed object. Unlike
+`GCObjectRootPtr<T>`, it does not keep its target alive. The collector clears the
+weak pointer when the target is reclaimed:
+
+```cpp
+cppgc::GarbageCollector gc;
+cppgc::GCObjectRootPtr<Node> root(gc);
+root = gc.createInstance<Node>(1);
+
+cppgc::GCObjectWeakPtr<Node> weak(root);
+
+gc.collect();              // root keeps the node alive
+auto locked = weak.lock(); // promotes the live target to a registered root
+
+root.reset();
+locked.reset();
+gc.collect();              // the node is reclaimed and weak is cleared
+
+assert(weak.expired());
+assert(weak.get() == nullptr);
+```
+
+A weak pointer can be constructed with a collector and later assigned a managed
+pointer or root:
+
+```cpp
+cppgc::GCObjectWeakPtr<Node> weak(gc);
+weak = gc.createInstance<Node>(1);
+```
+
+Use `lock()` when the object must remain alive while it is used. It returns an
+empty `GCObjectRootPtr<T>` if the weak pointer has expired. `get()` only observes
+the current target; the returned raw pointer is not a root and may become
+dangling after a later collection.
+
+`empty()` and `expired()` both report whether the target has been cleared, and
+`reset()` clears it explicitly. Copying a weak pointer creates an independently
+registered weak pointer to the same target.
+
+Weak pointers, roots, and their targets must belong to the same collector.
+Assigning a target or weak pointer from another collector throws
+`std::invalid_argument`. A weak pointer may outlive its collector: collector
+destruction detaches and clears it, after which `lock()` throws
+`std::logic_error`.
+
+When `GCObjectWeakPtr<T>` is stored as a field of a managed object, initialize it
+with that object's collector. Do not pass weak fields to `TraceVisitor`; weak
+references intentionally do not make their targets reachable.
+
 ## Managed members
 
 `GCMember<T>` supports pointer assignment, `get()`, `operator->`, Boolean tests,
-and `reset()`. It is intentionally not copyable because copying it would also
-copy the identity of its containing object.
+and `reset()`. It is a trivially copyable, pointer-sized value.
 
-Every managed pointer (GCMember or raw) must be explicitly pushed via
-`getGCObjectPointer` inside your `trace` override. C++17 has no standard
-reflection mechanism that lets the collector find members automatically.
+Each `GCMember` stores only its target pointer (8 bytes on 64-bit builds). There
+is no intrusive per-object member registry; tracing metadata is declared once
+per class in `trace()`.
+
+Because a target-only member does not know its containing object, assigning a
+foreign or stale target does not throw immediately. The next `collect()` detects
+the invalid managed edge before dereferencing it, throws `std::invalid_argument`,
+and leaves the collector usable after the edge is reset.
 
 Raw pointer members remain supported for compatibility:
 
@@ -130,62 +185,41 @@ class LegacyNode : public cppgc::GCObject
 public:
     LegacyNode* next = nullptr;
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
+        visitor.visitRaw(next);
     }
 };
 ```
 
-Raw members cannot reject cross-collector assignments. During tracing, foreign
+Raw members cannot reject cross-collector assignments automatically. They must
+be passed explicitly to `visitor.visitRaw()`. During tracing, foreign
 or stale raw edges are ignored because membership is checked before the target
 is dereferenced. Prefer `GCMember<T>` for new code.
 
-Edges assigned inside an object's constructor are validated after the object is
-registered. If any initial edge points outside the collector, creation rolls back
-and throws `std::invalid_argument`.
+If both a base and derived class override `trace()`, the derived override must
+call `Base::trace(visitor)` to preserve all base-class edges.
+
+Managed edges assigned inside an object's constructor are validated after the
+object is registered. If an initial managed edge points outside the collector,
+creation rolls back and throws `std::invalid_argument`. Legacy raw edges use the
+same policy during construction and collection: foreign or stale targets are
+ignored.
 
 ## Pointer-free and inherited types
 
-**Normal usage requires zero registration beyond `trace`**: when a class has
-no managed pointers, simply derive from `GCObject` and do not override `trace`
-(the base empty impl is sufficient). No ClassInfo needed.
-
-**Only if you use runtime type queries** (`isTypeOf<T>`, `isSubclassOf`,
-`isSameType`, or `T::GetClassInfo()` for multi-TU tests), supply a minimal
-static ClassInfo registration (C++17 inline statics allow header use):
+When a class has no managed pointers, simply derive from `GCObject`. No tracing
+override is needed:
 
 ```cpp
 class ValueObject : public cppgc::GCObject
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-};
+{};
 ```
 
-For derived types that need the queries, set parent and call base trace (if any):
-
-```cpp
-class Derived : public Parent
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ Parent::GetClassInfo() };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        // push own members using getGCObjectPointer
-        Parent::trace(pointers);
-    }
-};
-```
-
-ClassInfo is only for the is* queries + inheritance metadata chain. The primary
-tracing is always via the virtual `trace` (standard C++, no macros).
-See tests for full examples.
+A derived class can add `GCMember` fields normally and visit them in its
+`trace()` override. Call the base implementation only when the base also traces
+edges. Use standard C++ RTTI (`dynamic_cast` or `typeid`) if runtime type queries
+are needed.
 
 ## Automatic collection threshold
 
@@ -247,19 +281,20 @@ from a registered root.
 - Sweep order is unspecified. Managed destructors must not dereference other
   managed objects.
 - Raw pointers and `GCMember` values become invalid when their target is
-  collected. CppGC does not provide weak references.
+  collected. Use `GCObjectWeakPtr<T>` when a non-owning reference must be cleared
+  automatically.
 - The collector resets its internal state if tracing throws, and a later
   collection can be attempted again.
 
 ## Limitations
 
-- No conservative stack scanning: reachability comes only from registered roots
-  and declared members in `trace` overrides.
+- No conservative stack scanning: reachability comes only from registered roots,
+  and edges declared through `trace()`.
 - No moving or compacting collection.
 - No concurrent or parallel collection.
-- No weak-reference or finalizer API.
+- No finalizer API.
 - No automatic byte-based heap limit; the optional threshold counts objects.
-- The ownership hash set adds per-object allocation and lookup overhead.
+- The ownership registry adds per-object storage and lookup overhead.
 - Manually deleting an object returned by `createInstance()` is invalid and can
   cause a later double deletion.
 
@@ -304,5 +339,6 @@ cmake -S . -B build \
 
 The repository's CI builds and tests with both GCC and Clang sanitizers. The
 unit suite covers cycles, deep graphs, root and collector lifetimes,
-cross-collector references, reentrancy, thread affinity, thresholds, exception
-recovery, inherited metadata, randomized graphs, and multi-translation-unit use.
+cross-collector references, weak pointers, reentrancy, thread affinity,
+thresholds, exception recovery, inherited managed members, and randomized
+graphs.

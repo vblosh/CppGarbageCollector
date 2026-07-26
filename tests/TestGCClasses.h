@@ -1,43 +1,21 @@
 #pragma once
 
+#include <memory>
+
 #include "GarbageCollector.h"
 
-class HeaderDefinedNode : public cppgc::GCObject
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    HeaderDefinedNode() : next(this)
-    {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
-    {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
-    }
-
-    cppgc::GCMember<HeaderDefinedNode> next;
-};
-
-const cppgc::ClassInfo* getHeaderDefinedNodeInfoFromOtherTranslationUnit();
-
-// --- Test helper classes (moved here for better organization; all use new virtual trace) ---
+// Test helper classes for ownership and tracing behavior.
 
 class Foo : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     Foo(int id)
-        : pFoo(this), id(id)
+        : id(id)
     {}
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(pFoo));
+        visitor.visit(pFoo);
     }
 
     cppgc::GCMember<Foo> pFoo;
@@ -47,63 +25,43 @@ public:
 class Boo : public Foo
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ Foo::GetClassInfo() };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     Boo(int id, char ch)
-        : Foo(id), ch(ch), pBoo(this)
+        : Foo(id), ch(ch)
     {}
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(pBoo));
-        Foo::trace(pointers);
+        Foo::trace(visitor);
+        visitor.visit(pBoo);
     }
 
     char ch;
     cppgc::GCMember<Boo> pBoo;
 };
 
-class NoAncestor : public cppgc::GCObject
+class PointerFreeBase : public cppgc::GCObject
+{};
+
+class ChildWithMember : public PointerFreeBase
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-};
-
-class ChildOfNoAncestor : public NoAncestor
-{
-public:
-    static inline const cppgc::ClassInfo classInfo{ NoAncestor::GetClassInfo() };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    ChildOfNoAncestor() : child(this)
-    {}
-
     void setChild(Foo* value)
     {
         child = value;
     }
 
-    void trace(cppgc::GCPointerList& pointers) const override
+private:
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(child));
+        visitor.visit(child);
     }
 
-private:
     cppgc::GCMember<Foo> child;
 };
 
 class ThrowingObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     ThrowingObject()
     {
         throw std::runtime_error("constructor failure");
@@ -113,16 +71,13 @@ public:
 class LegacyRawNode : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    LegacyRawNode() : next(nullptr)
+    explicit LegacyRawNode(LegacyRawNode* next = nullptr)
+        : next(next)
     {}
 
-    void trace(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(next));
+        visitor.visitRaw(next);
     }
 
     LegacyRawNode* next;
@@ -131,29 +86,21 @@ public:
 class ConstructorEdgeObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    explicit ConstructorEdgeObject(Foo* child) : child(this, child)
+    explicit ConstructorEdgeObject(Foo* child) : child(child)
     {}
 
-    void trace(cppgc::GCPointerList& pointers) const override
+private:
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(child));
+        visitor.visit(child);
     }
 
-private:
     cppgc::GCMember<Foo> child;
 };
 
 class ReentrantObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
     ReentrantObject(cppgc::GarbageCollector& collector, bool& rejected)
         : collector(collector), rejected(rejected)
     {}
@@ -178,33 +125,64 @@ private:
 class GraphNode : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    GraphNode() : first(this), second(this)
-    {}
-
-    void trace(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor& visitor) const override
     {
-        pointers.push_back(cppgc::getGCObjectPointer(first));
-        pointers.push_back(cppgc::getGCObjectPointer(second));
+        visitor.visit(first);
+        visitor.visit(second);
     }
 
     cppgc::GCMember<GraphNode> first;
     cppgc::GCMember<GraphNode> second;
 };
 
+class CountingTraceObject : public cppgc::GCObject
+{
+public:
+    explicit CountingTraceObject(int& traceCount)
+        : traceCount(traceCount)
+    {}
+
+    void trace(cppgc::TraceVisitor&) const override
+    {
+        ++traceCount;
+    }
+
+private:
+    int& traceCount;
+};
+
+class DynamicMemberOwner : public cppgc::GCObject
+{
+public:
+    void addEdges(Foo* firstTarget, Foo* secondTarget)
+    {
+        first = std::make_unique<cppgc::GCMember<Foo>>(firstTarget);
+        second = std::make_unique<cppgc::GCMember<Foo>>(secondTarget);
+    }
+
+    void removeFirstEdge()
+    {
+        first.reset();
+    }
+
+private:
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        if (first)
+            visitor.visit(*first);
+        if (second)
+            visitor.visit(*second);
+    }
+
+    std::unique_ptr<cppgc::GCMember<Foo>> first;
+    std::unique_ptr<cppgc::GCMember<Foo>> second;
+};
+
 class ThrowingTraceObject : public cppgc::GCObject
 {
 public:
-    static inline const cppgc::ClassInfo classInfo{ nullptr };
-    static const cppgc::ClassInfo* GetClassInfo() { return &classInfo; }
-    virtual const cppgc::ClassInfo* getClassInfo() const override { return &classInfo; }
-
-    void trace(cppgc::GCPointerList& pointers) const override
+    void trace(cppgc::TraceVisitor&) const override
     {
-        (void)pointers;  // unused (throws before using)
         if (shouldThrow)
         {
             shouldThrow = false;
@@ -216,3 +194,92 @@ public:
 };
 
 inline bool ThrowingTraceObject::shouldThrow = false;
+
+class WeakAssigningDestructor : public cppgc::GCObject
+{
+public:
+    WeakAssigningDestructor(
+        cppgc::GCObjectWeakPtr<Foo>& weak,
+        bool& assignmentSucceeded)
+        : weak(weak), assignmentSucceeded(assignmentSucceeded)
+    {}
+
+    ~WeakAssigningDestructor() override
+    {
+        try
+        {
+            weak = target;
+            assignmentSucceeded = true;
+        }
+        catch (...)
+        {
+            assignmentSucceeded = false;
+        }
+    }
+
+    void setTarget(Foo* value)
+    {
+        target = value;
+    }
+
+private:
+    cppgc::GCObjectWeakPtr<Foo>& weak;
+    bool& assignmentSucceeded;
+    Foo* target = nullptr;
+};
+
+class CountingWeakRegistry : public cppgc::IRootsRegistry
+{
+public:
+    explicit CountingWeakRegistry(const cppgc::GCObject* liveTarget)
+        : liveTarget(liveTarget)
+    {}
+
+    void addRoot(cppgc::GCObjectRootPtrBase*) override {}
+    void removeRoot(cppgc::GCObjectRootPtrBase*) override {}
+    void addWeak(cppgc::GCObjectWeakPtrBase*) override {}
+    void removeWeak(cppgc::GCObjectWeakPtrBase*) override {}
+
+    bool owns(const cppgc::GCObject* object) const override
+    {
+        ++ownsCalls;
+        return object == liveTarget;
+    }
+
+    bool acceptsWeakTarget(const cppgc::GCObject* object) const override
+    {
+        ++acceptanceCalls;
+        return object == liveTarget;
+    }
+
+    mutable int ownsCalls = 0;
+    mutable int acceptanceCalls = 0;
+
+private:
+    const cppgc::GCObject* liveTarget;
+};
+
+class SelfWeakNode : public cppgc::GCObject
+{
+public:
+    explicit SelfWeakNode(cppgc::IRootsRegistry& registry)
+        : self(registry)
+    {}
+
+    cppgc::GCObjectWeakPtr<SelfWeakNode> self;
+};
+
+class ForwardDeclaredWeakTarget;
+
+class ForwardDeclaredWeakOwner : public cppgc::GCObject
+{
+public:
+    explicit ForwardDeclaredWeakOwner(cppgc::IRootsRegistry& registry)
+        : target(registry)
+    {}
+
+    cppgc::GCObjectWeakPtr<ForwardDeclaredWeakTarget> target;
+};
+
+class ForwardDeclaredWeakTarget : public cppgc::GCObject
+{};

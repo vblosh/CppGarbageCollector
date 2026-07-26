@@ -14,14 +14,14 @@ class Node : public GCObject
 {
 public:
     Node(Typ val)
-        : left(this), right(this), value(val)
+        : value(val)
     {
     }
 
-    void trace(GCPointerList& pointers) const override
+    void trace(TraceVisitor& visitor) const override
     {
-        pointers.push_back(getGCObjectPointer(left));
-        pointers.push_back(getGCObjectPointer(right));
+        visitor.visit(left);
+        visitor.visit(right);
     }
 
     GCMember<Node> left;
@@ -74,6 +74,9 @@ int performanceTest()
     Typ sum = 0;
 
     std::cout << "Performance test started\n";
+    std::cout << "sizeof(Node)=" << sizeof(Node)
+              << " sizeof(GCObject)=" << sizeof(GCObject)
+              << " sizeof(GCMember<Node>)=" << sizeof(GCMember<Node>) << '\n';
     std::chrono::duration<double> elapsed;
 
     std::vector<Typ> data(NUM_INS);
