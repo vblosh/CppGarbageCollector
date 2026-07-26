@@ -269,15 +269,18 @@ namespace cppgc
 		bool owns(const GCObject* object) const override
 		{
 			ensureOwnerThread();
-			return isAllocated(const_cast<GCObject*>(object));
+			GCObjectPtr target = const_cast<GCObject*>(object);
+			return isAllocated(target)
+				|| (state == State::sweeping && sweepingDeadRegistry.contains(target));
 		}
 
 		bool acceptsWeakTarget(const GCObject* object) const override
 		{
 			ensureOwnerThread();
 			GCObjectPtr target = const_cast<GCObject*>(object);
-			return isAllocated(target)
-				&& (state != State::sweeping || target->markEpoch == currentEpoch);
+			if (state == State::sweeping && sweepingDeadRegistry.contains(target))
+				return false;
+			return isAllocated(target);
 		}
 
 		template<class T, class... Args>
@@ -329,6 +332,12 @@ namespace cppgc
 					markReachable(root->get());
 
 				clearDeadWeakPointers();
+				sweepingDeadRegistry.clear();
+				for (auto ptr : allocated)
+				{
+					if (ptr->markEpoch != currentEpoch)
+						sweepingDeadRegistry.insert(ptr);
+				}
 				state = State::sweeping;
 
 				size_t liveCount = 0;
@@ -346,11 +355,13 @@ namespace cppgc
 					}
 				}
 				allocated.resize(liveCount);
+				sweepingDeadRegistry.clear();
 
 				updateNextCollectionThreshold();
 			}
 			catch (...)
 			{
+				sweepingDeadRegistry.clear();
 				state = State::idle;
 				throw;
 			}
@@ -522,6 +533,7 @@ namespace cppgc
 		std::unordered_set<GCObjectWeakPtrBase*> weaks;
 		std::vector<GCObjectPtr> allocated;
 		detail::PointerRegistry allocatedRegistry;
+		detail::PointerRegistry sweepingDeadRegistry;
 	};
 }
 

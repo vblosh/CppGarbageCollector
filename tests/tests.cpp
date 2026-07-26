@@ -572,6 +572,23 @@ TEST(GCTEST, destructorAssignmentToLaterDeadObjectIsIgnored)
     ASSERT_EQ(0, gc.get_objects_count());
 }
 
+TEST(GCTEST, destructorAssignmentToAlreadySweptDeadObjectIsIgnored)
+{
+    GarbageCollector gc;
+    GCObjectWeakPtr<Foo> weak(gc);
+    bool assignmentSucceeded = false;
+    Foo* target = gc.createInstance<Foo>(1);
+    auto* assigning = gc.createInstance<WeakAssigningDestructor>(
+        weak, assignmentSucceeded);
+    assigning->setTarget(target);
+
+    gc.collect();
+
+    ASSERT_TRUE(assignmentSucceeded);
+    ASSERT_TRUE(weak.empty());
+    ASSERT_EQ(0, gc.get_objects_count());
+}
+
 TEST(GCTEST, destructorAssignmentToLiveObjectSurvivesSweep)
 {
     GarbageCollector gc;
