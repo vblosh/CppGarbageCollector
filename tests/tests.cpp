@@ -37,6 +37,22 @@ TEST(GCTEST, testRoots1)
     ASSERT_EQ(1, gc.get_objects_count());
 }
 
+TEST(GCTEST, duplicateRootsTraceObjectOncePerCollection)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<CountingTraceObject> first(gc);
+    GCObjectRootPtr<CountingTraceObject> second(gc);
+    int traceCount = 0;
+    first = gc.createInstance<CountingTraceObject>(traceCount);
+    second = first.get();
+    traceCount = 0;
+
+    gc.collect();
+
+    ASSERT_EQ(1, traceCount);
+    ASSERT_EQ(1, gc.get_objects_count());
+}
+
 TEST(GCTEST, testCyclicRefs1)
 {
     GarbageCollector gc;

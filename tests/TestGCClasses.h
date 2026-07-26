@@ -134,6 +134,22 @@ public:
     cppgc::GCMember<GraphNode> second;
 };
 
+class CountingTraceObject : public cppgc::GCObject
+{
+public:
+    explicit CountingTraceObject(int& traceCount)
+        : traceCount(traceCount)
+    {}
+
+    void trace(cppgc::TraceVisitor&) const override
+    {
+        ++traceCount;
+    }
+
+private:
+    int& traceCount;
+};
+
 class DynamicMemberOwner : public cppgc::GCObject
 {
 public:

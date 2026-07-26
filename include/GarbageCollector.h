@@ -328,8 +328,7 @@ namespace cppgc
 			try
 			{
 				advanceEpoch();
-				for (auto root : roots)
-					markReachable(root->get());
+				markReachableRoots();
 
 				clearDeadWeakPointers();
 				sweepingDeadRegistry.clear();
@@ -490,16 +489,20 @@ namespace cppgc
 			context.pending->push_back(child);
 		}
 
-		void markReachable(GCObjectPtr root)
+		void markReachableRoots()
 		{
-			if (!isAllocated(root))
-				return;
-
 			GCPointerList pending;
 			MarkTraceContext context{ this, &pending };
 			TraceVisitor visitor{ &context, markManagedEdge, markRawEdge };
-			root->markEpoch = currentEpoch;
-			pending.push_back(root);
+
+			for (auto root : roots)
+			{
+				GCObjectPtr object = root->get();
+				if (!isAllocated(object) || object->markEpoch == currentEpoch)
+					continue;
+				object->markEpoch = currentEpoch;
+				pending.push_back(object);
+			}
 
 			while (!pending.empty())
 			{
