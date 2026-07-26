@@ -71,7 +71,8 @@ public:
 class LegacyRawNode : public cppgc::GCObject
 {
 public:
-    LegacyRawNode() : next(nullptr)
+    explicit LegacyRawNode(LegacyRawNode* next = nullptr)
+        : next(next)
     {}
 
     void trace(cppgc::TraceVisitor& visitor) const override

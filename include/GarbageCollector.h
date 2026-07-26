@@ -440,7 +440,7 @@ namespace cppgc
 			const GarbageCollector* collector;
 		};
 
-		static void validateTracedEdge(void* opaqueContext, GCObjectPtr pointer)
+		static void validateManagedEdge(void* opaqueContext, GCObjectPtr pointer)
 		{
 			auto& context = *static_cast<ValidationTraceContext*>(opaqueContext);
 			if (pointer && !context.collector->isAllocated(pointer))
@@ -449,10 +449,13 @@ namespace cppgc
 			}
 		}
 
+		static void ignoreRawEdgeDuringValidation(void*, GCObjectPtr) noexcept
+		{}
+
 		void validateDirectEdges(GCObjectPtr object) const
 		{
 			ValidationTraceContext context{ this };
-			TraceVisitor visitor{ &context, validateTracedEdge, validateTracedEdge };
+			TraceVisitor visitor{ &context, validateManagedEdge, ignoreRawEdgeDuringValidation };
 			object->trace(visitor);
 		}
 

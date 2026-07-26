@@ -152,6 +152,18 @@ TEST(GCTEST, ignoresForeignAndStaleLegacyRawEdges)
     ASSERT_EQ(1, first.get_objects_count());
 }
 
+TEST(GCTEST, ignoresForeignLegacyRawEdgeCreatedByConstructor)
+{
+    GarbageCollector first;
+    GarbageCollector second;
+    GCObjectRootPtr<LegacyRawNode> root(first);
+    LegacyRawNode* foreign = second.createInstance<LegacyRawNode>();
+
+    ASSERT_NO_THROW(root = first.createInstance<LegacyRawNode>(foreign));
+    ASSERT_NO_THROW(first.collect());
+    ASSERT_EQ(1, first.get_objects_count());
+}
+
 TEST(GCTEST, rejectsReentrantCollection)
 {
     GarbageCollector gc;

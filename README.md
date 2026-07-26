@@ -200,9 +200,11 @@ is dereferenced. Prefer `GCMember<T>` for new code.
 If both a base and derived class override `trace()`, the derived override must
 call `Base::trace(visitor)` to preserve all base-class edges.
 
-Edges assigned inside an object's constructor are validated after the object is
-registered. If any initial edge points outside the collector, creation rolls back
-and throws `std::invalid_argument`.
+Managed edges assigned inside an object's constructor are validated after the
+object is registered. If an initial managed edge points outside the collector,
+creation rolls back and throws `std::invalid_argument`. Legacy raw edges use the
+same policy during construction and collection: foreign or stale targets are
+ignored.
 
 ## Pointer-free and inherited types
 
