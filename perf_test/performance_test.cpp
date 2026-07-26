@@ -1,5 +1,5 @@
 #include <iostream>
-#include <fstream>
+#include <cstdint>
 #include <chrono>
 #include <vector>
 #include <iomanip>
@@ -30,6 +30,16 @@ public:
 };
 
 const int NUM_INS = 1000000;
+
+Typ nextDataValue(uint64_t& state) noexcept
+{
+    state += 0x9e3779b97f4a7c15ULL;
+    uint64_t value = state;
+    value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    value = (value ^ (value >> 27)) * 0x94d049bb133111ebULL;
+    value ^= value >> 31;
+    return static_cast<Typ>(value >> 11) * (1.0 / 9007199254740992.0);
+}
 
 Node* insertInBinaryTree(GarbageCollector& gc, Node* node, Typ val)
 {
@@ -66,20 +76,10 @@ int performanceTest()
     std::cout << "Performance test started\n";
     std::chrono::duration<double> elapsed;
 
-    std::vector<double> data(NUM_INS);
-    std::ifstream ifp("data.bin", std::ios::in | std::ios::binary);
-    if (!ifp)
-    {
-        std::cerr << "Failed to open data.bin\n";
-        return -1;
-    }
-    ifp.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(data[0]));
-    if (ifp.gcount() != static_cast<std::streamsize>(data.size() * sizeof(data[0])))
-    {
-        std::cerr << "Incomplete data read from data.bin\n";
-        return -1;
-    }
-    ifp.close();
+    std::vector<Typ> data(NUM_INS);
+    uint64_t dataState = 12345;
+    for (auto& value : data)
+        value = nextDataValue(dataState);
 
     GCObjectRootPtr<Node> root1(gc);
     root1 = gc.createInstance<Node>(0.5);

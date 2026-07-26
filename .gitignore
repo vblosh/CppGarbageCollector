@@ -365,3 +365,6 @@ FodyWeavers.xsd
 /CppGC/My Inspector Results - CppGC
 /CppGC/.opencppcov/CppGC/Debug_x86.json
 build-vcpkg
+
+# Generated performance datasets
+data.bin

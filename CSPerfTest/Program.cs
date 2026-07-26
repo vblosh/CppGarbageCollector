@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Diagnostics;
-using System.IO;
 using Typ = System.Double;
 
 namespace GCPerfTest
@@ -40,7 +39,19 @@ namespace GCPerfTest
         }
 
         static Typ g_Sum;
-        static readonly string FileName = @"data.bin";
+
+        static Typ nextDataValue(ref ulong state)
+        {
+            unchecked
+            {
+                state += 0x9e3779b97f4a7c15UL;
+                ulong value = state;
+                value = (value ^ (value >> 30)) * 0xbf58476d1ce4e5b9UL;
+                value = (value ^ (value >> 27)) * 0x94d049bb133111ebUL;
+                value ^= value >> 31;
+                return (value >> 11) * (1.0 / 9007199254740992.0);
+            }
+        }
 
         static void DFS(Node node)
         {
@@ -53,32 +64,10 @@ namespace GCPerfTest
         static void performanceTest()
         {
             var data = new Typ[NUM_INS];
-            bool load = true;
-            if (load)
+            ulong dataState = 12345;
+            for (int i = 0; i < data.Length; ++i)
             {
-                var bytes = File.ReadAllBytes(FileName);
-                for (int i = 0; i < data.Length; ++i)
-                {
-                    data[i] = BitConverter.ToDouble(bytes, sizeof(Typ) * i);
-                }
-            }
-            else
-            {
-                // prepare array
-                Random rnd = new Random(12345);
-                for (int i = 0; i < NUM_INS; ++i)
-                {
-                    data[i] = rnd.NextDouble();
-                }
-
-                // save it
-                Byte[] bytes = new byte[data.Length * sizeof(Typ)];
-                for (int i = 0; i < data.Length; ++i)
-                {
-                    var dblbytes = BitConverter.GetBytes(data[i]);
-                    Array.Copy(dblbytes, 0, bytes, sizeof(Typ) * i, sizeof(Typ));
-                }
-                File.WriteAllBytes(FileName, bytes);
+                data[i] = nextDataValue(ref dataState);
             }
 
             Node root1 = new Node(0.5);

@@ -292,7 +292,9 @@ cmake -S . -B build \
 ```
 
 The performance test (a heavier benchmark-style binary) is built by default.
-To skip it (e.g. in CI or for faster configuration):
+The C++ and C# performance tests generate the same deterministic input sequence
+in memory, so no binary dataset is required in the checkout. To skip the C++
+performance test (e.g. in CI or for faster configuration):
 
 ```sh
 cmake -S . -B build \
