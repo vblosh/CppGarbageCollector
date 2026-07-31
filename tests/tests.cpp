@@ -297,6 +297,29 @@ TEST(GCTEST, adaptiveThresholdSaturatesInsteadOfOverflowing)
         detail::calculateNextCollectionThreshold(0, maximum));
 }
 
+TEST(GCTEST, pointerRegistryReusesDeletedSlotsAndRehashes)
+{
+	detail::PointerRegistry registry;
+	std::vector<GCObject> objects(32);
+
+	for (auto& object : objects)
+		ASSERT_TRUE(registry.insert(&object));
+
+	ASSERT_FALSE(registry.insert(&objects.front()));
+	ASSERT_TRUE(registry.erase(&objects[7]));
+	ASSERT_FALSE(registry.contains(&objects[7]));
+	ASSERT_TRUE(registry.insert(&objects[7]));
+
+	for (auto& object : objects)
+		ASSERT_TRUE(registry.contains(&object));
+
+	ASSERT_TRUE(registry.erase(&objects.front()));
+	ASSERT_FALSE(registry.erase(&objects.front()));
+	registry.clear();
+	for (auto& object : objects)
+		ASSERT_FALSE(registry.contains(&object));
+}
+
 TEST(GCTEST, randomizedGraphCollectsUnreachableComponent)
 {
     constexpr int componentSize = 500;

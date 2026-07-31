@@ -2,6 +2,7 @@
 #define GARBAGE_COLLECTOR_H
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -30,96 +31,108 @@ namespace cppgc
 		public:
 			bool insert(GCObjectPtr pointer)
 			{
-				if (!pointer)
+				if (!pointer || pointer == deletedSlot())
 					return false;
 				ensureInsertCapacity();
 
 				const size_t mask = slots.size() - 1;
 				size_t index = hashPointer(pointer) & mask;
+				size_t probe = 1;
 				size_t firstDeleted = slots.size();
 				for (;;)
 				{
-					switch (states[index])
+					GCObjectPtr slot = slots[index];
+					if (slot == nullptr)
 					{
-					case SlotState::empty:
 						if (firstDeleted != slots.size())
 							index = firstDeleted;
 						slots[index] = pointer;
-						states[index] = SlotState::occupied;
 						++objectCount;
 						if (firstDeleted != slots.size())
 							--deletedCount;
 						return true;
-					case SlotState::occupied:
-						if (slots[index] == pointer)
-							return false;
-						break;
-					case SlotState::deleted:
+					}
+					if (slot == deletedSlot())
+					{
 						if (firstDeleted == slots.size())
 							firstDeleted = index;
-						break;
 					}
-					index = (index + 1) & mask;
+					else if (slot == pointer)
+					{
+						return false;
+					}
+					index = nextProbe(index, probe, mask);
 				}
 			}
 
 			bool erase(GCObjectPtr pointer) noexcept
 			{
-				if (!pointer || slots.empty())
+				if (!pointer || pointer == deletedSlot() || slots.empty())
 					return false;
 
 				const size_t mask = slots.size() - 1;
 				size_t index = hashPointer(pointer) & mask;
+				size_t probe = 1;
 				for (;;)
 				{
-					if (states[index] == SlotState::empty)
+					GCObjectPtr slot = slots[index];
+					if (slot == nullptr)
 						return false;
-					if (states[index] == SlotState::occupied && slots[index] == pointer)
+					if (slot == pointer)
 					{
-						slots[index] = nullptr;
-						states[index] = SlotState::deleted;
+						slots[index] = deletedSlot();
 						--objectCount;
 						++deletedCount;
 						return true;
 					}
-					index = (index + 1) & mask;
+					index = nextProbe(index, probe, mask);
 				}
 			}
 
 			bool contains(GCObjectPtr pointer) const noexcept
 			{
-				if (!pointer || slots.empty())
+				if (!pointer || pointer == deletedSlot() || slots.empty())
 					return false;
 
 				const size_t mask = slots.size() - 1;
 				size_t index = hashPointer(pointer) & mask;
+				size_t probe = 1;
 				for (;;)
 				{
-					if (states[index] == SlotState::empty)
+					GCObjectPtr slot = slots[index];
+					if (slot == nullptr)
 						return false;
-					if (states[index] == SlotState::occupied && slots[index] == pointer)
+					if (slot == pointer)
 						return true;
-					index = (index + 1) & mask;
+					index = nextProbe(index, probe, mask);
 				}
 			}
 
 			void clear() noexcept
 			{
 				slots.clear();
-				states.clear();
 				objectCount = 0;
 				deletedCount = 0;
 			}
 
 		private:
-			enum class SlotState : uint8_t
-			{
-				empty,
-				occupied,
-				deleted
-			};
-
 			static constexpr size_t initialCapacity = 8;
+
+			static GCObjectPtr deletedSlot() noexcept
+			{
+				return reinterpret_cast<GCObjectPtr>(
+					static_cast<uintptr_t>(alignof(GCObject)));
+			}
+
+			static size_t nextProbe(
+				size_t index, size_t& probe, size_t mask) noexcept
+			{
+				// Triangular offsets reduce primary clustering. Power-of-two
+				// capacities make this sequence visit every slot.
+				index = (index + probe) & mask;
+				++probe;
+				return index;
+			}
 
 			static size_t hashPointer(GCObjectPtr pointer) noexcept
 			{
@@ -149,7 +162,7 @@ namespace cppgc
 					return rehash(initialCapacity);
 
 				const size_t usedSlots = objectCount + deletedCount;
-				const size_t maximumUsedSlots = slots.size() - slots.size() / 4;
+				const size_t maximumUsedSlots = slots.size() / 2 + slots.size() / 5;
 				if (usedSlots + 1 <= maximumUsedSlots)
 					return;
 
@@ -163,30 +176,29 @@ namespace cppgc
 
 			void rehash(size_t capacity)
 			{
+				// Capacity is always a power of two because probing wraps with a mask.
+				assert(capacity > 0 && (capacity & (capacity - 1)) == 0);
 				std::vector<GCObjectPtr> newSlots(capacity, nullptr);
-				std::vector<SlotState> newStates(capacity, SlotState::empty);
 				const size_t mask = capacity - 1;
 
 				for (size_t index = 0; index < slots.size(); ++index)
 				{
-					if (states[index] != SlotState::occupied)
+					GCObjectPtr pointer = slots[index];
+					if (pointer == nullptr || pointer == deletedSlot())
 						continue;
 
-					GCObjectPtr pointer = slots[index];
 					size_t newIndex = hashPointer(pointer) & mask;
-					while (newStates[newIndex] == SlotState::occupied)
-						newIndex = (newIndex + 1) & mask;
+					size_t probe = 1;
+					while (newSlots[newIndex] != nullptr)
+						newIndex = nextProbe(newIndex, probe, mask);
 					newSlots[newIndex] = pointer;
-					newStates[newIndex] = SlotState::occupied;
 				}
 
 				slots.swap(newSlots);
-				states.swap(newStates);
 				deletedCount = 0;
 			}
 
 			std::vector<GCObjectPtr> slots;
-			std::vector<SlotState> states;
 			size_t objectCount = 0;
 			size_t deletedCount = 0;
 		};
