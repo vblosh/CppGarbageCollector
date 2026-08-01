@@ -37,7 +37,6 @@ namespace cppgc
 
 				const size_t mask = slots.size() - 1;
 				size_t index = hashPointer(pointer) & mask;
-				size_t probe = 1;
 				size_t firstDeleted = slots.size();
 				for (;;)
 				{
@@ -61,7 +60,7 @@ namespace cppgc
 					{
 						return false;
 					}
-					index = nextProbe(index, probe, mask);
+					index = (index + 1) & mask;
 				}
 			}
 
@@ -72,7 +71,6 @@ namespace cppgc
 
 				const size_t mask = slots.size() - 1;
 				size_t index = hashPointer(pointer) & mask;
-				size_t probe = 1;
 				for (;;)
 				{
 					GCObjectPtr slot = slots[index];
@@ -85,7 +83,7 @@ namespace cppgc
 						++deletedCount;
 						return true;
 					}
-					index = nextProbe(index, probe, mask);
+					index = (index + 1) & mask;
 				}
 			}
 
@@ -96,7 +94,6 @@ namespace cppgc
 
 				const size_t mask = slots.size() - 1;
 				size_t index = hashPointer(pointer) & mask;
-				size_t probe = 1;
 				for (;;)
 				{
 					GCObjectPtr slot = slots[index];
@@ -104,7 +101,7 @@ namespace cppgc
 						return false;
 					if (slot == pointer)
 						return true;
-					index = nextProbe(index, probe, mask);
+					index = (index + 1) & mask;
 				}
 			}
 
@@ -122,16 +119,6 @@ namespace cppgc
 			{
 				return reinterpret_cast<GCObjectPtr>(
 					static_cast<uintptr_t>(alignof(GCObject)));
-			}
-
-			static size_t nextProbe(
-				size_t index, size_t& probe, size_t mask) noexcept
-			{
-				// Triangular offsets reduce primary clustering. Power-of-two
-				// capacities make this sequence visit every slot.
-				index = (index + probe) & mask;
-				++probe;
-				return index;
 			}
 
 			static size_t hashPointer(GCObjectPtr pointer) noexcept
@@ -188,9 +175,8 @@ namespace cppgc
 						continue;
 
 					size_t newIndex = hashPointer(pointer) & mask;
-					size_t probe = 1;
 					while (newSlots[newIndex] != nullptr)
-						newIndex = nextProbe(newIndex, probe, mask);
+						newIndex = (newIndex + 1) & mask;
 					newSlots[newIndex] = pointer;
 				}
 
