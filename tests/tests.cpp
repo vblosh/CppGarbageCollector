@@ -236,7 +236,8 @@ TEST(GCTEST, zeroRegistrationClassWorks)
 
 TEST(GCTEST, collectionThresholdTriggersBeforeAllocation)
 {
-    GarbageCollector gc(2);
+    const size_t fooSize = sizeof(Foo);
+    GarbageCollector gc(fooSize * 2);
     GCObjectRootPtr<Foo> root(gc);
     root = gc.createInstance<Foo>(1);
     gc.createInstance<Foo>(2);
@@ -245,8 +246,9 @@ TEST(GCTEST, collectionThresholdTriggersBeforeAllocation)
 
     ASSERT_EQ(2, gc.get_objects_count());
     ASSERT_TRUE(gc.owns(newest));
-    ASSERT_EQ(2, gc.get_collection_threshold());
-    ASSERT_EQ(1025, gc.get_next_collection_threshold());
+    ASSERT_EQ(fooSize * 2, gc.get_collection_threshold());
+    ASSERT_EQ(fooSize + std::max(fooSize / 2, detail::minimumThresholdGrowthBytes),
+        gc.get_next_collection_threshold());
 }
 
 TEST(GCTEST, collectionThresholdCanBeChanged)
@@ -261,17 +263,38 @@ TEST(GCTEST, collectionThresholdCanBeChanged)
 
 TEST(GCTEST, adaptiveThresholdAvoidsRepeatedCollection)
 {
-    GarbageCollector gc(2);
+    const size_t fooSize = sizeof(Foo);
+    GarbageCollector gc(fooSize * 2);
     GCObjectRootPtr<Foo> root(gc);
     root = gc.createInstance<Foo>(1);
     gc.createInstance<Foo>(2);
 
-    gc.createInstance<Foo>(3); // Collects one unreachable object; next threshold becomes 1025.
+    gc.createInstance<Foo>(3);
     for (int id = 4; id <= 20; ++id)
         gc.createInstance<Foo>(id);
 
     ASSERT_EQ(19, gc.get_objects_count());
-    ASSERT_EQ(1025, gc.get_next_collection_threshold());
+    ASSERT_EQ(fooSize + std::max(fooSize / 2, detail::minimumThresholdGrowthBytes),
+        gc.get_next_collection_threshold());
+}
+
+TEST(GCTEST, collectionThresholdUsesObjectBytes)
+{
+    struct LargeObject : GCObject
+    {
+        char payload[sizeof(Foo) * 4]{};
+    };
+
+    const size_t fooSize = sizeof(Foo);
+    GarbageCollector gc(fooSize * 3);
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(1);
+    gc.createInstance<LargeObject>();
+
+    Foo* newest = gc.createInstance<Foo>(2);
+
+    ASSERT_EQ(2, gc.get_objects_count());
+    ASSERT_TRUE(gc.owns(newest));
 }
 
 TEST(GCTEST, zeroThresholdKeepsAutomaticCollectionDisabled)
@@ -295,6 +318,29 @@ TEST(GCTEST, adaptiveThresholdSaturatesInsteadOfOverflowing)
         detail::calculateNextCollectionThreshold(1, maximum - 100));
     ASSERT_EQ(0,
         detail::calculateNextCollectionThreshold(0, maximum));
+}
+
+TEST(GCTEST, pointerRegistryReusesDeletedSlotsAndRehashes)
+{
+	detail::PointerRegistry registry;
+	std::vector<GCObject> objects(32);
+
+	for (auto& object : objects)
+		ASSERT_TRUE(registry.insert(&object));
+
+	ASSERT_FALSE(registry.insert(&objects.front()));
+	ASSERT_TRUE(registry.erase(&objects[7]));
+	ASSERT_FALSE(registry.contains(&objects[7]));
+	ASSERT_TRUE(registry.insert(&objects[7]));
+
+	for (auto& object : objects)
+		ASSERT_TRUE(registry.contains(&object));
+
+	ASSERT_TRUE(registry.erase(&objects.front()));
+	ASSERT_FALSE(registry.erase(&objects.front()));
+	registry.clear();
+	for (auto& object : objects)
+		ASSERT_FALSE(registry.contains(&object));
 }
 
 TEST(GCTEST, randomizedGraphCollectsUnreachableComponent)
