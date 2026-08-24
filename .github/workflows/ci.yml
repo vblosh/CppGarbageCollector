@@ -18,4 +18,22 @@ jobs:
       - name: Build unit tests
         run: cmake --build build --target unittests
       - name: Test
+        env:
+          ASAN_OPTIONS: detect_leaks=1
         run: ctest --test-dir build --output-on-failure
+
+  msan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libgtest-dev ninja-build
+      - name: Configure
+        env:
+          CC: clang
+          CXX: clang++
+        run: cmake -S . -B build-msan -G Ninja -DCPPGC_ENABLE_MSAN=ON -DCPPGC_BUILD_PERF_TESTS=OFF
+      - name: Build unit tests
+        run: cmake --build build-msan --target unittests
+      - name: Test
+        run: ctest --test-dir build-msan --output-on-failure
