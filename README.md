@@ -329,15 +329,6 @@ cmake -S . -B build \
   -DCPPGC_ENABLE_SANITIZERS=ON
 ```
 
-Enable MemorySanitizer with Clang:
-
-```sh
-cmake -S . -B build-msan \
-  -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-  -DCMAKE_CXX_COMPILER=clang++ \
-  -DCPPGC_ENABLE_MSAN=ON
-```
-
 The sanitizer CI job also enables LeakSanitizer through `ASAN_OPTIONS=detect_leaks=1`.
 
 The performance test (a heavier benchmark-style binary) is built by default.
