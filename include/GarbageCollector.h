@@ -24,7 +24,7 @@ namespace cppgc
 {
 	namespace detail
 	{
-		inline constexpr size_t minimumThresholdGrowth = 1024;
+		inline constexpr size_t minimumThresholdGrowthBytes = 16 * 1024;
 
 		class PointerRegistry
 		{
@@ -190,16 +190,16 @@ namespace cppgc
 		};
 
 		inline size_t calculateNextCollectionThreshold(
-			size_t configuredMinimumThreshold, size_t liveObjects) noexcept
+			size_t configuredMinimumThreshold, size_t liveBytes) noexcept
 		{
 			if (configuredMinimumThreshold == 0)
 				return 0;
 
-			const size_t growth = std::max(liveObjects / 2, minimumThresholdGrowth);
+			const size_t growth = std::max(liveBytes / 2, minimumThresholdGrowthBytes);
 			const size_t maximum = std::numeric_limits<size_t>::max();
-			const size_t grownThreshold = liveObjects > maximum - growth
+			const size_t grownThreshold = liveBytes > maximum - growth
 				? maximum
-				: liveObjects + growth;
+				: liveBytes + growth;
 			return std::max(configuredMinimumThreshold, grownThreshold);
 		}
 	}
@@ -231,8 +231,9 @@ namespace cppgc
 
 			auto objects = std::move(allocated);
 			allocatedRegistry.clear();
-			for (auto ptr : objects)
+			for (const auto& object : objects)
 			{
+				GCObjectPtr ptr = object.pointer;
 				ptr->collectorIdentity = nullptr;
 				delete ptr;
 			}
@@ -291,8 +292,12 @@ namespace cppgc
 			ensureOwnerThread();
 			ensureIdle("allocate an object");
 
-			if (nextCollectionThreshold && allocated.size() >= nextCollectionThreshold)
+			if (nextCollectionThreshold && allocatedBytes >= nextCollectionThreshold)
 				collect();
+
+			const size_t objectSize = sizeof(T);
+			if (allocatedBytes > std::numeric_limits<size_t>::max() - objectSize)
+				throw std::length_error("managed-object memory usage is too large");
 
 			auto object = std::make_unique<T>(std::forward<Args>(args)...);
 			T* ptr = object.get();
@@ -303,13 +308,17 @@ namespace cppgc
 
 			try
 			{
-				allocated.push_back(ptr);
+				allocated.push_back({ ptr, objectSize });
+				allocatedBytes += objectSize;
 				validateDirectEdges(ptr);
 			}
 			catch (...)
 			{
-				if (!allocated.empty() && allocated.back() == ptr)
+				if (!allocated.empty() && allocated.back().pointer == ptr)
+				{
 					allocated.pop_back();
+					allocatedBytes -= objectSize;
+				}
 				allocatedRegistry.erase(ptr);
 				ptr->collectorIdentity = nullptr;
 				throw;
@@ -332,19 +341,23 @@ namespace cppgc
 
 				clearDeadWeakPointers();
 				sweepingDeadRegistry.clear();
-				for (auto ptr : allocated)
+				for (const auto& object : allocated)
 				{
+					GCObjectPtr ptr = object.pointer;
 					if (ptr->markEpoch != currentEpoch)
 						sweepingDeadRegistry.insert(ptr);
 				}
 				state = State::sweeping;
 
 				size_t liveCount = 0;
-				for (auto ptr : allocated)
+				size_t liveBytes = 0;
+				for (const auto& object : allocated)
 				{
+					GCObjectPtr ptr = object.pointer;
 					if (ptr->markEpoch == currentEpoch)
 					{
-						allocated[liveCount++] = ptr;
+						allocated[liveCount++] = object;
+						liveBytes += object.size;
 					}
 					else
 					{
@@ -354,6 +367,7 @@ namespace cppgc
 					}
 				}
 				allocated.resize(liveCount);
+				allocatedBytes = liveBytes;
 				sweepingDeadRegistry.clear();
 
 				updateNextCollectionThreshold();
@@ -419,8 +433,11 @@ namespace cppgc
 		{
 			if (currentEpoch == std::numeric_limits<uint64_t>::max())
 			{
-				for (auto ptr : allocated)
+				for (const auto& object : allocated)
+				{
+					GCObjectPtr ptr = object.pointer;
 					ptr->markEpoch = 0;
+				}
 				currentEpoch = 1;
 			}
 			else
@@ -432,7 +449,7 @@ namespace cppgc
 		void updateNextCollectionThreshold() noexcept
 		{
 			nextCollectionThreshold = detail::calculateNextCollectionThreshold(
-				configuredMinimumThreshold, allocated.size());
+				configuredMinimumThreshold, allocatedBytes);
 		}
 
 		struct ValidationTraceContext
@@ -530,6 +547,12 @@ namespace cppgc
 			return allocatedRegistry.contains(object);
 		}
 
+		struct AllocatedObject
+		{
+			GCObjectPtr pointer;
+			size_t size;
+		};
+
 		size_t configuredMinimumThreshold;
 		size_t nextCollectionThreshold;
 		std::thread::id ownerThread;
@@ -537,7 +560,8 @@ namespace cppgc
 		uint64_t currentEpoch = 0;
 		std::unordered_set<GCObjectRootPtrBase*> roots;
 		std::unordered_set<GCObjectWeakPtrBase*> weaks;
-		std::vector<GCObjectPtr> allocated;
+		std::vector<AllocatedObject> allocated;
+		size_t allocatedBytes = 0;
 		detail::PointerRegistry allocatedRegistry;
 		detail::PointerRegistry sweepingDeadRegistry;
 	};

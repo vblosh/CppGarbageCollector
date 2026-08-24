@@ -223,7 +223,8 @@ are needed.
 
 ## Automatic collection threshold
 
-Passing a positive threshold sets the minimum automatic-collection threshold:
+Passing a positive threshold in bytes sets the minimum automatic-collection
+threshold:
 
 ```cpp
 cppgc::GarbageCollector gc(10000);
@@ -235,13 +236,14 @@ The collector keeps two values:
 - The adaptive next threshold, returned by `get_next_collection_threshold()`.
 
 Before creating a new object, `createInstance()` calls `collect()` when the
-current object count is greater than or equal to the adaptive next threshold.
-The new object is allocated after that collection, so it cannot be reclaimed
-during its own creation.
+current live managed-object payload bytes are greater than or equal to the
+adaptive next threshold. The new object is allocated after that collection, so
+it cannot be reclaimed during its own creation.
 
 After every successful collection, the next threshold is recomputed from the
-number of surviving objects. It grows by 50% of the live count or at least 1,024
-objects, whichever is greater, and never falls below the configured minimum.
+payload bytes of surviving objects. It grows by 50% of the live bytes or at
+least 16 KiB, whichever is greater, and never falls below the configured
+minimum.
 The calculation saturates at `std::numeric_limits<size_t>::max()` rather than
 overflowing. This prevents a mostly-live heap from collecting again before every
 subsequent allocation.
@@ -249,8 +251,8 @@ subsequent allocation.
 Conceptually, the calculation is:
 
 ```text
-growth = max(live_objects / 2, 1024)
-next_threshold = max(configured_minimum, saturating_add(live_objects, growth))
+growth = max(live_bytes / 2, 16384)
+next_threshold = max(configured_minimum, saturating_add(live_bytes, growth))
 ```
 
 A threshold of `0` disables automatic collection.
@@ -293,7 +295,8 @@ from a registered root.
 - No moving or compacting collection.
 - No concurrent or parallel collection.
 - No finalizer API.
-- No automatic byte-based heap limit; the optional threshold counts objects.
+- The automatic byte threshold measures managed object payloads and excludes
+  allocator, registry, and vector bookkeeping overhead.
 - The ownership registry adds per-object storage and lookup overhead.
 - Manually deleting an object returned by `createInstance()` is invalid and can
   cause a later double deletion.
