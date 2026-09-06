@@ -719,6 +719,299 @@ TEST(GCTEST, forwardDeclaredWeakMemberCanReferenceTarget)
     ASSERT_EQ(target.get(), owner->target.get());
 }
 
+TEST(GCTEST, destructorAssignmentToDeadObjectRejectedAndRootDoesNotDangle)
+{
+    // Case 1: Target allocated after assigning object (swept after assigning)
+    {
+        GarbageCollector gc;
+        GCObjectRootPtr<Foo> root(gc);
+        bool assignmentSucceeded = false;
+        bool exceptionCaught = false;
+        auto* assigning = gc.createInstance<RootAssigningDestructor>(
+            root, assignmentSucceeded, exceptionCaught);
+        Foo* target = gc.createInstance<Foo>(1);
+        assigning->setTarget(target);
+
+        gc.collect();
+
+        ASSERT_FALSE(assignmentSucceeded);
+        ASSERT_TRUE(exceptionCaught);
+        ASSERT_TRUE(root.empty());
+        ASSERT_EQ(nullptr, root.get());
+        ASSERT_EQ(0, gc.get_objects_count());
+    }
+
+    // Case 2: Target allocated before assigning object (already swept before assigning destructor runs)
+    {
+        GarbageCollector gc;
+        GCObjectRootPtr<Foo> root(gc);
+        bool assignmentSucceeded = false;
+        bool exceptionCaught = false;
+        Foo* target = gc.createInstance<Foo>(1);
+        auto* assigning = gc.createInstance<RootAssigningDestructor>(
+            root, assignmentSucceeded, exceptionCaught);
+        assigning->setTarget(target);
+
+        gc.collect();
+
+        ASSERT_FALSE(assignmentSucceeded);
+        ASSERT_TRUE(exceptionCaught);
+        ASSERT_TRUE(root.empty());
+        ASSERT_EQ(nullptr, root.get());
+        ASSERT_EQ(0, gc.get_objects_count());
+    }
+}
+
+TEST(GCTEST, destructorCreatingOrCopyingHandlesRejectedDuringSweep)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(1);
+    GCObjectWeakPtr<Foo> weak(root);
+
+    bool createRootFailed = false;
+    bool createWeakFailed = false;
+    bool copyRootFailed = false;
+    bool copyWeakFailed = false;
+
+    (void)gc.createInstance<HandleCreatingDestructor>(
+        gc, root, weak, createRootFailed, createWeakFailed, copyRootFailed, copyWeakFailed);
+
+    gc.collect();
+
+    ASSERT_TRUE(createRootFailed);
+    ASSERT_TRUE(createWeakFailed);
+    ASSERT_TRUE(copyRootFailed);
+    ASSERT_TRUE(copyWeakFailed);
+    ASSERT_EQ(1, gc.get_objects_count());
+    ASSERT_EQ(1, root->id);
+}
+
+TEST(GCTEST, destructorMutatingRootsAndWeakPointers)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> liveRoot(gc);
+    liveRoot = gc.createInstance<Foo>(100);
+
+    GCObjectRootPtr<Foo> targetRoot(gc);
+    bool assignmentSucceeded = false;
+    bool exceptionCaught = false;
+
+    auto* assigning = gc.createInstance<RootAssigningDestructor>(
+        targetRoot, assignmentSucceeded, exceptionCaught);
+    assigning->setTarget(liveRoot.get());
+
+    gc.collect();
+
+    // Assigning a live object during sweeping should succeed
+    ASSERT_TRUE(assignmentSucceeded);
+    ASSERT_FALSE(exceptionCaught);
+    ASSERT_EQ(liveRoot.get(), targetRoot.get());
+    ASSERT_EQ(1, gc.get_objects_count());
+}
+
+TEST(GCTEST, collectorDestructionSafelyRejectsAllPublicAPIs)
+{
+    bool ownsRejected = false;
+    bool countRejected = false;
+    bool thresholdRejected = false;
+    bool nextThresholdRejected = false;
+    bool collectRejected = false;
+    bool createRejected = false;
+    bool acceptsWeakRejected = false;
+    bool removeRootRejected = false;
+    bool removeWeakRejected = false;
+
+    {
+        GarbageCollector gc;
+        (void)gc.createInstance<DestructorCollectorInterrogator>(
+            gc, ownsRejected, countRejected, thresholdRejected,
+            nextThresholdRejected, collectRejected, createRejected,
+            acceptsWeakRejected, removeRootRejected, removeWeakRejected);
+    }
+
+    ASSERT_TRUE(ownsRejected);
+    ASSERT_TRUE(countRejected);
+    ASSERT_TRUE(thresholdRejected);
+    ASSERT_TRUE(nextThresholdRejected);
+    ASSERT_TRUE(collectRejected);
+    ASSERT_TRUE(createRejected);
+    ASSERT_TRUE(acceptsWeakRejected);
+    ASSERT_TRUE(removeRootRejected);
+    ASSERT_TRUE(removeWeakRejected);
+}
+
+TEST(GCTEST, epochRolloverResetsObjectEpochsAndPreservesLiveGraph)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(42);
+    root->pFoo = gc.createInstance<Foo>(43);
+
+    // Unrooted cycle
+    Foo* dead1 = gc.createInstance<Foo>(1);
+    Foo* dead2 = gc.createInstance<Foo>(2);
+    dead1->pFoo = dead2;
+    dead2->pFoo = dead1;
+
+    ASSERT_EQ(4, gc.get_objects_count());
+
+#ifdef CPPGC_TESTING
+    gc.setEpochForTesting(std::numeric_limits<uint64_t>::max());
+    ASSERT_EQ(std::numeric_limits<uint64_t>::max(), gc.getEpochForTesting());
+#endif
+
+    gc.collect();
+
+#ifdef CPPGC_TESTING
+    ASSERT_EQ(1, gc.getEpochForTesting());
+#endif
+
+    ASSERT_EQ(2, gc.get_objects_count());
+    ASSERT_EQ(42, root->id);
+    ASSERT_EQ(43, root->pFoo->id);
+}
+
+TEST(GCTEST, pointerReuseAfterCollectionIsSafelyTraced)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<LegacyRawNode> root(gc);
+    root = gc.createInstance<LegacyRawNode>();
+
+    // Create an unrooted node
+    LegacyRawNode* temporary = gc.createInstance<LegacyRawNode>();
+    (void)temporary;
+    gc.collect(); // temporary collected
+
+    // Allocate a new node which may reuse the memory
+    LegacyRawNode* fresh = gc.createInstance<LegacyRawNode>();
+    root->next = fresh;
+
+    gc.collect();
+
+    ASSERT_EQ(2, gc.get_objects_count());
+    ASSERT_EQ(fresh, root->next);
+}
+
+TEST(GCTEST, threadMisuseOfHandlesRejected)
+{
+    GarbageCollector gc;
+    Foo* object = gc.createInstance<Foo>(10);
+    GCObjectWeakPtr<Foo> weak(gc);
+    GCObjectRootPtr<Foo> root(gc);
+
+    bool constructRootRejected = false;
+    bool constructWeakRejected = false;
+    bool assignWeakRejected = false;
+    bool assignRootRejected = false;
+    bool lockWeakRejected = false;
+
+    std::thread worker([&]
+    {
+        try { GCObjectRootPtr<Foo> r(gc); } catch (const std::logic_error&) { constructRootRejected = true; }
+        try { GCObjectWeakPtr<Foo> w(gc); } catch (const std::logic_error&) { constructWeakRejected = true; }
+        try { weak = object; } catch (const std::logic_error&) { assignWeakRejected = true; }
+        try { root = object; } catch (const std::logic_error&) { assignRootRejected = true; }
+        try { (void)weak.lock(); } catch (const std::logic_error&) { lockWeakRejected = true; }
+    });
+    worker.join();
+
+    ASSERT_TRUE(constructRootRejected);
+    ASSERT_TRUE(constructWeakRejected);
+    ASSERT_TRUE(assignWeakRejected);
+    ASSERT_TRUE(assignRootRejected);
+    ASSERT_TRUE(lockWeakRejected);
+}
+
+TEST(GCTEST, multipleInheritancePointerAdjustment)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<MultiInheritedObject> root(gc);
+    root = gc.createInstance<MultiInheritedObject>(10);
+    root->peer = gc.createInstance<MultiInheritedObject>(20);
+
+    // Verify virtual method dispatches across non-first base interfaces
+    NonGCInterface* nonGC = root.get();
+    ASSERT_EQ(10 + 42, nonGC->interfaceValue());
+
+    SecondNonGCInterface* secondNonGC = root.get();
+    ASSERT_EQ(20, secondNonGC->secondValue());
+
+    ASSERT_EQ(2, gc.get_objects_count());
+    gc.collect();
+    ASSERT_EQ(2, gc.get_objects_count());
+
+    ASSERT_EQ(10 + 42, nonGC->interfaceValue());
+    ASSERT_EQ(20, secondNonGC->secondValue());
+
+    root.reset();
+    gc.collect();
+    ASSERT_EQ(0, gc.get_objects_count());
+}
+
+TEST(GCTEST, typedWeakAndRootPointerConversions)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<DerivedManaged> derivedRoot(gc);
+    derivedRoot = gc.createInstance<DerivedManaged>(10, 20);
+
+    // Covariant construction: Root<Derived> -> Root<Base>
+    GCObjectRootPtr<BaseManaged> baseRoot(derivedRoot);
+    ASSERT_EQ(derivedRoot.get(), baseRoot.get());
+    ASSERT_EQ(10, baseRoot->baseVal);
+
+    // Covariant construction: Root<Derived> -> Weak<Base>
+    GCObjectWeakPtr<BaseManaged> baseWeakFromRoot(derivedRoot);
+    ASSERT_EQ(derivedRoot.get(), baseWeakFromRoot.get());
+    ASSERT_EQ(10, baseWeakFromRoot.get()->baseVal);
+
+    // Covariant copy: Weak<Derived> -> Weak<Base>
+    GCObjectWeakPtr<DerivedManaged> derivedWeak(derivedRoot);
+    GCObjectWeakPtr<BaseManaged> baseWeakFromWeak(derivedWeak);
+    ASSERT_EQ(derivedRoot.get(), baseWeakFromWeak.get());
+
+    // Lock promoted base weak returns Root<Base>
+    GCObjectRootPtr<BaseManaged> locked = baseWeakFromWeak.lock();
+    ASSERT_FALSE(locked.empty());
+    ASSERT_EQ(derivedRoot.get(), locked.get());
+
+    // Covariant assignment: Root<Derived> -> Root<Base>
+    GCObjectRootPtr<BaseManaged> assignedBaseRoot(gc);
+    assignedBaseRoot = derivedRoot;
+    ASSERT_EQ(derivedRoot.get(), assignedBaseRoot.get());
+
+    // Covariant assignment: Weak<Derived> -> Weak<Base>
+    GCObjectWeakPtr<BaseManaged> assignedBaseWeak(gc);
+    assignedBaseWeak = derivedWeak;
+    ASSERT_EQ(derivedRoot.get(), assignedBaseWeak.get());
+}
+
+TEST(GCTEST, handleExplicitOperatorBool)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    GCObjectWeakPtr<Foo> weak(gc);
+
+    ASSERT_FALSE(static_cast<bool>(root));
+    ASSERT_FALSE(static_cast<bool>(weak));
+    if (root) { FAIL(); }
+    if (weak) { FAIL(); }
+
+    root = gc.createInstance<Foo>(1);
+    weak = root;
+
+    ASSERT_TRUE(static_cast<bool>(root));
+    ASSERT_TRUE(static_cast<bool>(weak));
+    if (!root) { FAIL(); }
+    if (!weak) { FAIL(); }
+
+    root.reset();
+    ASSERT_FALSE(static_cast<bool>(root));
+
+    gc.collect();
+    ASSERT_FALSE(static_cast<bool>(weak));
+}
+
 int main(int argc, char** argv) 
 {
 	::testing::InitGoogleTest(&argc, argv);

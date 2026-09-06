@@ -21,6 +21,8 @@ namespace cppgc
 		template<class T>
 		void visit(const GCMember<T>& member) const;
 
+		// Legacy raw edge tracing. Only accepts pointers to GCObject-derived types;
+		// does not scan arbitrary native pointers or unmanaged memory.
 		template<class T>
 		void visitRaw(T* pointer) const;
 

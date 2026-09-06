@@ -231,11 +231,15 @@ namespace cppgc
 
 			auto objects = std::move(allocated);
 			allocatedRegistry.clear();
+			sweepingDeadRegistry.clear();
 			for (const auto& object : objects)
 			{
 				GCObjectPtr ptr = object.pointer;
-				ptr->collectorIdentity = nullptr;
-				delete ptr;
+				if (ptr)
+				{
+					ptr->collectorIdentity = nullptr;
+					delete ptr;
+				}
 			}
 		}
 
@@ -249,6 +253,7 @@ namespace cppgc
 		void removeRoot(GCObjectRootPtrBase* root) override
 		{
 			ensureOwnerThread();
+			ensureNotDestroying("remove a root");
 			roots.erase(root);
 		}
 
@@ -262,20 +267,28 @@ namespace cppgc
 		void removeWeak(GCObjectWeakPtrBase* weak) override
 		{
 			ensureOwnerThread();
+			ensureNotDestroying("remove a weak pointer");
 			weaks.erase(weak);
 		}
 
 		bool owns(const GCObject* object) const override
 		{
 			ensureOwnerThread();
+			ensureNotPoisoned();
+			ensureNotDestroying("query ownership");
 			GCObjectPtr target = const_cast<GCObject*>(object);
-			return isAllocated(target)
-				|| (state == State::sweeping && sweepingDeadRegistry.contains(target));
+			if (!target)
+				return false;
+			if (state == State::sweeping && sweepingDeadRegistry.contains(target))
+				return false;
+			return isAllocated(target);
 		}
 
 		bool acceptsWeakTarget(const GCObject* object) const override
 		{
 			ensureOwnerThread();
+			ensureNotPoisoned();
+			ensureNotDestroying("validate weak target");
 			GCObjectPtr target = const_cast<GCObject*>(object);
 			if (state == State::sweeping && sweepingDeadRegistry.contains(target))
 				return false;
@@ -347,8 +360,17 @@ namespace cppgc
 					if (ptr->markEpoch != currentEpoch)
 						sweepingDeadRegistry.insert(ptr);
 				}
-				state = State::sweeping;
+			}
+			catch (...)
+			{
+				sweepingDeadRegistry.clear();
+				state = State::idle;
+				throw;
+			}
 
+			state = State::sweeping;
+			try
+			{
 				size_t liveCount = 0;
 				size_t liveBytes = 0;
 				for (const auto& object : allocated)
@@ -371,15 +393,14 @@ namespace cppgc
 				sweepingDeadRegistry.clear();
 
 				updateNextCollectionThreshold();
+				state = State::idle;
 			}
 			catch (...)
 			{
 				sweepingDeadRegistry.clear();
-				state = State::idle;
+				state = State::poisoned;
 				throw;
 			}
-
-			state = State::idle;
 		}
 
 		void set_collection_threshold(size_t threshold)
@@ -393,20 +414,38 @@ namespace cppgc
 		size_t get_collection_threshold() const
 		{
 			ensureOwnerThread();
+			ensureNotPoisoned();
+			ensureNotDestroying("query the collection threshold");
 			return configuredMinimumThreshold;
 		}
 
 		size_t get_next_collection_threshold() const
 		{
 			ensureOwnerThread();
+			ensureNotPoisoned();
+			ensureNotDestroying("query the next collection threshold");
 			return nextCollectionThreshold;
 		}
 
 		size_t get_objects_count() const
 		{
 			ensureOwnerThread();
+			ensureNotPoisoned();
+			ensureNotDestroying("query the object count");
 			return allocated.size();
 		}
+
+#ifdef CPPGC_TESTING
+		void setEpochForTesting(uint64_t epoch) noexcept
+		{
+			currentEpoch = epoch;
+		}
+
+		uint64_t getEpochForTesting() const noexcept
+		{
+			return currentEpoch;
+		}
+#endif
 
 	private:
 		enum class State
@@ -414,7 +453,8 @@ namespace cppgc
 			idle,
 			collecting,
 			sweeping,
-			destroying
+			destroying,
+			poisoned
 		};
 
 		void ensureOwnerThread() const
@@ -423,8 +463,21 @@ namespace cppgc
 				throw std::logic_error("garbage collector used from a non-owner thread");
 		}
 
+		void ensureNotPoisoned() const
+		{
+			if (state == State::poisoned)
+				throw std::logic_error("garbage collector is in a poisoned state after a failed sweep");
+		}
+
+		void ensureNotDestroying(const char* operation) const
+		{
+			if (state == State::destroying)
+				throw std::logic_error(std::string("cannot ") + operation + " while collector is being destroyed");
+		}
+
 		void ensureIdle(const char* operation) const
 		{
+			ensureNotPoisoned();
 			if (state != State::idle)
 				throw std::logic_error(std::string("cannot ") + operation + " while collection is active");
 		}

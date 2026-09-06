@@ -29,6 +29,7 @@ namespace cppgc
 				rootsRegistry->removeRoot(this);
 		}
 
+		// Copying a root whose registry has been detached produces a detached empty root.
 		GCObjectRootPtrBase(const GCObjectRootPtrBase& rhs)
 			: rootsRegistry(rhs.rootsRegistry), pObject(rhs.pObject)
 		{
@@ -43,8 +44,7 @@ namespace cppgc
 			if (rootsRegistry != rhs.rootsRegistry)
 				throw std::invalid_argument("cannot assign roots from different collectors");
 
-			pObject = rhs.pObject;
-			return *this;
+			return operator=(rhs.pObject);
 		}
 
 		GCObjectRootPtrBase& operator=(GCObjectPtr object)
@@ -54,6 +54,11 @@ namespace cppgc
 
 			pObject = object;
 			return *this;
+		}
+
+		explicit operator bool() const noexcept
+		{
+			return !empty();
 		}
 
 		bool empty() const noexcept
@@ -105,8 +110,23 @@ namespace cppgc
 			: GCObjectRootPtrBase(rhs)
 		{}
 
+		template<class U>
+		GCObjectRootPtr(const GCObjectRootPtr<U>& rhs)
+			: GCObjectRootPtrBase(rhs)
+		{
+			static_assert(std::is_convertible_v<U*, T*>, "source root type must be convertible to target root type");
+		}
+
 		GCObjectRootPtr& operator=(const GCObjectRootPtr& rhs)
 		{
+			GCObjectRootPtrBase::operator=(rhs);
+			return *this;
+		}
+
+		template<class U>
+		GCObjectRootPtr& operator=(const GCObjectRootPtr<U>& rhs)
+		{
+			static_assert(std::is_convertible_v<U*, T*>, "source root type must be convertible to target root type");
 			GCObjectRootPtrBase::operator=(rhs);
 			return *this;
 		}

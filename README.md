@@ -101,14 +101,24 @@ CppGC is non-moving: surviving object addresses do not change during collection.
 
 `GCObjectRootPtr<T>` registers itself when constructed and unregisters itself
 when destroyed. Copying a root creates another registered root. `reset()` or
-assignment from `nullptr` keeps the root registered but clears its object.
+assignment from `nullptr` keeps the root registered but clears its object. Roots
+provide `operator bool` (e.g. `if (root)`) for testing whether a target is held.
 
 A root accepts only objects owned by its collector. Assigning an object from a
-different collector throws `std::invalid_argument`.
+different collector throws `std::invalid_argument`. Roots support covariant
+derived-to-base conversions: `GCObjectRootPtr<Derived>` can be assigned or
+copied to `GCObjectRootPtr<Base>`.
+
+During sweeping, assigning a dead target to a root is rejected with
+`std::invalid_argument` to ensure roots cannot retain dangling pointers.
+
+Roots have thread affinity with their associated `GarbageCollector` and must only
+be constructed, copied, assigned, or destroyed on the collector's owner thread.
 
 A root may outlive its collector. Collector destruction detaches and clears all
 registered roots before deleting its remaining objects, so later root destruction
-does not access a dead collector.
+does not access a dead collector. Copying a detached root yields a detached empty
+root.
 
 `GarbageCollector` itself is neither copyable nor movable.
 
@@ -150,13 +160,15 @@ the current target; the returned raw pointer is not a root and may become
 dangling after a later collection.
 
 `empty()` and `expired()` both report whether the target has been cleared, and
-`reset()` clears it explicitly. Copying a weak pointer creates an independently
-registered weak pointer to the same target.
+`reset()` clears it explicitly. Weak pointers provide `operator bool` (e.g. `if (weak)`).
+Copying a weak pointer creates an independently registered weak pointer to the same target.
+Weak pointers support covariant conversions from derived weak pointers or roots.
 
 Weak pointers, roots, and their targets must belong to the same collector.
 Assigning a target or weak pointer from another collector throws
-`std::invalid_argument`. A weak pointer may outlive its collector: collector
-destruction detaches and clears it, after which `lock()` throws
+`std::invalid_argument`. Weak pointers must only be constructed, assigned, or
+destroyed on the collector's owner thread. A weak pointer may outlive its collector:
+collector destruction detaches and clears it, after which `lock()` throws
 `std::logic_error`.
 
 When `GCObjectWeakPtr<T>` is stored as a field of a managed object, initialize it
@@ -330,6 +342,11 @@ cmake -S . -B build \
 ```
 
 The sanitizer CI job also enables LeakSanitizer through `ASAN_OPTIONS=detect_leaks=1`.
+
+ThreadSanitizer can be enabled similarly with `-DCPPGC_ENABLE_TSAN=ON`.
+
+Unit tests are enabled by default (`-DCPPGC_BUILD_TESTS=ON`) and can be disabled
+with `-DCPPGC_BUILD_TESTS=OFF`.
 
 The performance test (a heavier benchmark-style binary) is built by default.
 The C++ and C# performance tests generate the same deterministic input sequence

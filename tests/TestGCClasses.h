@@ -283,3 +283,212 @@ public:
 
 class ForwardDeclaredWeakTarget : public cppgc::GCObject
 {};
+
+class RootAssigningDestructor : public cppgc::GCObject
+{
+public:
+    RootAssigningDestructor(
+        cppgc::GCObjectRootPtr<Foo>& root,
+        bool& assignmentSucceeded,
+        bool& exceptionCaught)
+        : root(root),
+          assignmentSucceeded(assignmentSucceeded),
+          exceptionCaught(exceptionCaught)
+    {}
+
+    ~RootAssigningDestructor() override
+    {
+        try
+        {
+            root = target;
+            assignmentSucceeded = true;
+        }
+        catch (const std::invalid_argument&)
+        {
+            exceptionCaught = true;
+        }
+        catch (...)
+        {
+            exceptionCaught = true;
+        }
+    }
+
+    void setTarget(Foo* value)
+    {
+        target = value;
+    }
+
+private:
+    cppgc::GCObjectRootPtr<Foo>& root;
+    bool& assignmentSucceeded;
+    bool& exceptionCaught;
+    Foo* target = nullptr;
+};
+
+class HandleCreatingDestructor : public cppgc::GCObject
+{
+public:
+    HandleCreatingDestructor(
+        cppgc::GarbageCollector& gc,
+        cppgc::GCObjectRootPtr<Foo>& existingRoot,
+        cppgc::GCObjectWeakPtr<Foo>& existingWeak,
+        bool& createRootFailed,
+        bool& createWeakFailed,
+        bool& copyRootFailed,
+        bool& copyWeakFailed)
+        : gc(gc),
+          existingRoot(existingRoot),
+          existingWeak(existingWeak),
+          createRootFailed(createRootFailed),
+          createWeakFailed(createWeakFailed),
+          copyRootFailed(copyRootFailed),
+          copyWeakFailed(copyWeakFailed)
+    {}
+
+    ~HandleCreatingDestructor() override
+    {
+        try
+        {
+            cppgc::GCObjectRootPtr<Foo> r(gc);
+        }
+        catch (const std::logic_error&)
+        {
+            createRootFailed = true;
+        }
+
+        try
+        {
+            cppgc::GCObjectWeakPtr<Foo> w(gc);
+        }
+        catch (const std::logic_error&)
+        {
+            createWeakFailed = true;
+        }
+
+        try
+        {
+            cppgc::GCObjectRootPtr<Foo> r2(existingRoot);
+        }
+        catch (const std::logic_error&)
+        {
+            copyRootFailed = true;
+        }
+
+        try
+        {
+            cppgc::GCObjectWeakPtr<Foo> w2(existingWeak);
+        }
+        catch (const std::logic_error&)
+        {
+            copyWeakFailed = true;
+        }
+    }
+
+private:
+    cppgc::GarbageCollector& gc;
+    cppgc::GCObjectRootPtr<Foo>& existingRoot;
+    cppgc::GCObjectWeakPtr<Foo>& existingWeak;
+    bool& createRootFailed;
+    bool& createWeakFailed;
+    bool& copyRootFailed;
+    bool& copyWeakFailed;
+};
+
+class DestructorCollectorInterrogator : public cppgc::GCObject
+{
+public:
+    DestructorCollectorInterrogator(
+        cppgc::GarbageCollector& gc,
+        bool& ownsRejected,
+        bool& countRejected,
+        bool& thresholdRejected,
+        bool& nextThresholdRejected,
+        bool& collectRejected,
+        bool& createRejected,
+        bool& acceptsWeakRejected,
+        bool& removeRootRejected,
+        bool& removeWeakRejected)
+        : gc(gc),
+          ownsRejected(ownsRejected),
+          countRejected(countRejected),
+          thresholdRejected(thresholdRejected),
+          nextThresholdRejected(nextThresholdRejected),
+          collectRejected(collectRejected),
+          createRejected(createRejected),
+          acceptsWeakRejected(acceptsWeakRejected),
+          removeRootRejected(removeRootRejected),
+          removeWeakRejected(removeWeakRejected)
+    {}
+
+    ~DestructorCollectorInterrogator() override
+    {
+        try { (void)gc.owns(this); } catch (const std::logic_error&) { ownsRejected = true; }
+        try { (void)gc.get_objects_count(); } catch (const std::logic_error&) { countRejected = true; }
+        try { (void)gc.get_collection_threshold(); } catch (const std::logic_error&) { thresholdRejected = true; }
+        try { (void)gc.get_next_collection_threshold(); } catch (const std::logic_error&) { nextThresholdRejected = true; }
+        try { gc.collect(); } catch (const std::logic_error&) { collectRejected = true; }
+        try { (void)gc.createInstance<Foo>(1); } catch (const std::logic_error&) { createRejected = true; }
+        try { (void)gc.acceptsWeakTarget(this); } catch (const std::logic_error&) { acceptsWeakRejected = true; }
+        try { gc.removeRoot(nullptr); } catch (const std::logic_error&) { removeRootRejected = true; }
+        try { gc.removeWeak(nullptr); } catch (const std::logic_error&) { removeWeakRejected = true; }
+    }
+
+private:
+    cppgc::GarbageCollector& gc;
+    bool& ownsRejected;
+    bool& countRejected;
+    bool& thresholdRejected;
+    bool& nextThresholdRejected;
+    bool& collectRejected;
+    bool& createRejected;
+    bool& acceptsWeakRejected;
+    bool& removeRootRejected;
+    bool& removeWeakRejected;
+};
+
+class NonGCInterface
+{
+public:
+    virtual ~NonGCInterface() = default;
+    virtual int interfaceValue() const = 0;
+    int nonGCField = 42;
+};
+
+class SecondNonGCInterface
+{
+public:
+    virtual ~SecondNonGCInterface() = default;
+    virtual int secondValue() const = 0;
+    double secondField = 3.14;
+};
+
+class MultiInheritedObject : public NonGCInterface, public SecondNonGCInterface, public cppgc::GCObject
+{
+public:
+    explicit MultiInheritedObject(int v) : value(v) {}
+
+    int interfaceValue() const override { return value + nonGCField; }
+    int secondValue() const override { return value * 2; }
+
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        visitor.visit(peer);
+    }
+
+    int value;
+    cppgc::GCMember<MultiInheritedObject> peer;
+};
+
+class BaseManaged : public cppgc::GCObject
+{
+public:
+    explicit BaseManaged(int val = 0) : baseVal(val) {}
+    int baseVal;
+};
+
+class DerivedManaged : public BaseManaged
+{
+public:
+    explicit DerivedManaged(int b = 0, int d = 0) : BaseManaged(b), derivedVal(d) {}
+    int derivedVal;
+};

@@ -62,6 +62,11 @@ namespace cppgc
 			return *this;
 		}
 
+		explicit operator bool() const noexcept
+		{
+			return !empty();
+		}
+
 		bool empty() const noexcept
 		{
 			return pObject == nullptr;
@@ -110,11 +115,18 @@ namespace cppgc
 		{}
 
 		template<class U>
+		GCObjectWeakPtr(const GCObjectWeakPtr<U>& rhs)
+			: GCObjectWeakPtrBase(rhs)
+		{
+			static_assert(std::is_convertible_v<U*, T*>, "source weak pointer type must be convertible to target weak pointer type");
+		}
+
+		template<class U>
 		explicit GCObjectWeakPtr(const GCObjectRootPtr<U>& root)
 			: GCObjectWeakPtrBase(*requireRegistry(root))
 		{
-			static_assert(std::is_same_v<U, T>, "root type must match the weak pointer type");
-			pObject = root.get();
+			static_assert(std::is_convertible_v<U*, T*>, "root type must be convertible to weak pointer type");
+			pObject = static_cast<T*>(root.get());
 		}
 
 		GCObjectWeakPtr& operator=(const GCObjectWeakPtr& rhs)
@@ -124,14 +136,22 @@ namespace cppgc
 		}
 
 		template<class U>
+		GCObjectWeakPtr& operator=(const GCObjectWeakPtr<U>& rhs)
+		{
+			static_assert(std::is_convertible_v<U*, T*>, "source weak pointer type must be convertible to target weak pointer type");
+			GCObjectWeakPtrBase::operator=(rhs);
+			return *this;
+		}
+
+		template<class U>
 		GCObjectWeakPtr& operator=(const GCObjectRootPtr<U>& root)
 		{
-			static_assert(std::is_same_v<U, T>, "root type must match the weak pointer type");
+			static_assert(std::is_convertible_v<U*, T*>, "root type must be convertible to weak pointer type");
 			IRootsRegistry* rootRegistry = root.registry();
 			if (registry() != rootRegistry)
 				throw std::invalid_argument("cannot assign weak pointers from different collectors");
 
-			GCObjectWeakPtrBase::operator=(root.get());
+			GCObjectWeakPtrBase::operator=(static_cast<T*>(root.get()));
 			return *this;
 		}
 
