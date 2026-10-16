@@ -492,3 +492,53 @@ public:
     explicit DerivedManaged(int b = 0, int d = 0) : BaseManaged(b), derivedVal(d) {}
     int derivedVal;
 };
+
+class IncompleteTargetClass;
+
+class IncompleteMemberContainer : public cppgc::GCObject
+{
+public:
+    IncompleteMemberContainer() = default;
+
+    void trace(cppgc::TraceVisitor& visitor) const override;
+
+    cppgc::GCMember<IncompleteTargetClass> target;
+};
+
+class IncompleteTargetClass : public cppgc::GCObject
+{
+public:
+    explicit IncompleteTargetClass(int val = 0) : value(val) {}
+    int value;
+};
+
+inline void IncompleteMemberContainer::trace(cppgc::TraceVisitor& visitor) const
+{
+    visitor.visit(target);
+}
+
+class NestedChild : public cppgc::GCObject
+{
+public:
+    explicit NestedChild(int id) : id(id) {}
+    int id;
+};
+
+class NestedAllocatingParent : public cppgc::GCObject
+{
+public:
+    explicit NestedAllocatingParent(cppgc::GarbageCollector& gc)
+    {
+        child1 = gc.createInstance<NestedChild>(1);
+        child2 = gc.createInstance<NestedChild>(2);
+    }
+
+    void trace(cppgc::TraceVisitor& visitor) const override
+    {
+        visitor.visit(child1);
+        visitor.visit(child2);
+    }
+
+    cppgc::GCMember<NestedChild> child1;
+    cppgc::GCMember<NestedChild> child2;
+};

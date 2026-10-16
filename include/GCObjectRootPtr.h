@@ -16,17 +16,25 @@ namespace cppgc
 	protected:
 		GCObjectPtr pObject;
 
+		~GCObjectRootPtrBase()
+		{
+			if (rootsRegistry)
+			{
+				try
+				{
+					rootsRegistry->removeRoot(this);
+				}
+				catch (...)
+				{
+				}
+			}
+		}
+
 	public:
 		explicit GCObjectRootPtrBase(IRootsRegistry& registry)
 			: rootsRegistry(&registry), pObject(nullptr)
 		{
 			rootsRegistry->addRoot(this);
-		}
-
-		virtual ~GCObjectRootPtrBase()
-		{
-			if (rootsRegistry)
-				rootsRegistry->removeRoot(this);
 		}
 
 		// Copying a root whose registry has been detached produces a detached empty root.
@@ -137,11 +145,18 @@ namespace cppgc
 			return *this;
 		}
 
+		// Downcast relies on non-virtual inheritance from GCObject.
 		T* operator->() const noexcept
 		{
 			return static_cast<T*>(pObject);
 		}
 
+		T& operator*() const noexcept
+		{
+			return *get();
+		}
+
+		// Downcast relies on non-virtual inheritance from GCObject.
 		T* get() const noexcept
 		{
 			return static_cast<T*>(pObject);
@@ -150,6 +165,86 @@ namespace cppgc
 		IRootsRegistry* registry() const noexcept
 		{
 			return GCObjectRootPtrBase::registry();
+		}
+
+		template<class U>
+		bool operator==(const GCObjectRootPtr<U>& rhs) const noexcept
+		{
+			return get() == rhs.get();
+		}
+
+		template<class U>
+		bool operator!=(const GCObjectRootPtr<U>& rhs) const noexcept
+		{
+			return get() != rhs.get();
+		}
+
+		bool operator==(std::nullptr_t) const noexcept
+		{
+			return empty();
+		}
+
+		bool operator!=(std::nullptr_t) const noexcept
+		{
+			return !empty();
+		}
+
+		friend bool operator==(std::nullptr_t, const GCObjectRootPtr& rhs) noexcept
+		{
+			return rhs.empty();
+		}
+
+		friend bool operator!=(std::nullptr_t, const GCObjectRootPtr& rhs) noexcept
+		{
+			return !rhs.empty();
+		}
+
+		template<class U>
+		bool operator==(const U* ptr) const noexcept
+		{
+			return get() == ptr;
+		}
+
+		template<class U>
+		bool operator!=(const U* ptr) const noexcept
+		{
+			return get() != ptr;
+		}
+
+		template<class U>
+		friend bool operator==(const U* ptr, const GCObjectRootPtr& rhs) noexcept
+		{
+			return ptr == rhs.get();
+		}
+
+		template<class U>
+		friend bool operator!=(const U* ptr, const GCObjectRootPtr& rhs) noexcept
+		{
+			return ptr != rhs.get();
+		}
+
+		template<class U>
+		bool operator==(const GCMember<U>& rhs) const noexcept
+		{
+			return get() == rhs.get();
+		}
+
+		template<class U>
+		bool operator!=(const GCMember<U>& rhs) const noexcept
+		{
+			return get() != rhs.get();
+		}
+
+		template<class U>
+		friend bool operator==(const GCMember<U>& lhs, const GCObjectRootPtr& rhs) noexcept
+		{
+			return lhs.get() == rhs.get();
+		}
+
+		template<class U>
+		friend bool operator!=(const GCMember<U>& lhs, const GCObjectRootPtr& rhs) noexcept
+		{
+			return lhs.get() != rhs.get();
 		}
 	};
 }

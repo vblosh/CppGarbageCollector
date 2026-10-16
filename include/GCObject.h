@@ -45,6 +45,9 @@ namespace cppgc
 		Callback rawCallback;
 	};
 
+	// Base class for all managed garbage-collected objects.
+	// Managed classes must derive non-virtually from GCObject. Virtual inheritance
+	// from GCObject is not supported because handle downcasts rely on static_cast.
 	class GCObject
 	{
 	public:
@@ -64,7 +67,6 @@ namespace cppgc
 	private:
 		friend class GarbageCollector;
 
-		const void* collectorIdentity = nullptr;
 		uint64_t markEpoch = 0;
 	};
 
@@ -72,10 +74,7 @@ namespace cppgc
 	class GCMember
 	{
 	public:
-		GCMember() noexcept
-		{
-			static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
-		}
+		GCMember() noexcept = default;
 
 		explicit GCMember(T* initialValue) noexcept
 			: target(initialValue)
@@ -90,6 +89,7 @@ namespace cppgc
 
 		GCMember& operator=(T* newValue) noexcept
 		{
+			static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
 			target = newValue;
 			return *this;
 		}
@@ -104,7 +104,12 @@ namespace cppgc
 			return get();
 		}
 
-		operator T*() const noexcept
+		T& operator*() const noexcept
+		{
+			return *get();
+		}
+
+		explicit operator T*() const noexcept
 		{
 			return get();
 		}
@@ -119,6 +124,62 @@ namespace cppgc
 			target = nullptr;
 		}
 
+		template<class U>
+		bool operator==(const GCMember<U>& rhs) const noexcept
+		{
+			return get() == rhs.get();
+		}
+
+		template<class U>
+		bool operator!=(const GCMember<U>& rhs) const noexcept
+		{
+			return get() != rhs.get();
+		}
+
+		bool operator==(std::nullptr_t) const noexcept
+		{
+			return target == nullptr;
+		}
+
+		bool operator!=(std::nullptr_t) const noexcept
+		{
+			return target != nullptr;
+		}
+
+		friend bool operator==(std::nullptr_t, const GCMember& rhs) noexcept
+		{
+			return rhs.target == nullptr;
+		}
+
+		friend bool operator!=(std::nullptr_t, const GCMember& rhs) noexcept
+		{
+			return rhs.target != nullptr;
+		}
+
+		template<class U>
+		bool operator==(const U* ptr) const noexcept
+		{
+			return get() == ptr;
+		}
+
+		template<class U>
+		bool operator!=(const U* ptr) const noexcept
+		{
+			return get() != ptr;
+		}
+
+		template<class U>
+		friend bool operator==(const U* ptr, const GCMember& rhs) noexcept
+		{
+			return ptr == rhs.get();
+		}
+
+		template<class U>
+		friend bool operator!=(const U* ptr, const GCMember& rhs) noexcept
+		{
+			return ptr != rhs.get();
+		}
+
 	private:
 		T* target = nullptr;
 	};
@@ -126,6 +187,7 @@ namespace cppgc
 	template<class T>
 	void TraceVisitor::visit(const GCMember<T>& member) const
 	{
+		static_assert(std::is_base_of_v<GCObject, T>, "managed type must derive from GCObject");
 		managedCallback(context, static_cast<GCObjectPtr>(member.get()));
 	}
 
@@ -137,12 +199,14 @@ namespace cppgc
 	}
 
 	template<class T>
+	[[deprecated("getGCObjectPointer is deprecated; use static_cast<GCObjectPtr> or GCMember::get() instead")]]
 	GCObjectPtr getGCObjectPointer(T* pointer)
 	{
 		return static_cast<GCObjectPtr>(pointer);
 	}
 
 	template<class T>
+	[[deprecated("getGCObjectPointer is deprecated; use static_cast<GCObjectPtr> or GCMember::get() instead")]]
 	GCObjectPtr getGCObjectPointer(const GCMember<T>& pointer)
 	{
 		return static_cast<GCObjectPtr>(pointer.get());

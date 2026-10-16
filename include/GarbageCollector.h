@@ -107,9 +107,24 @@ namespace cppgc
 
 			void clear() noexcept
 			{
-				slots.clear();
+				std::fill(slots.begin(), slots.end(), nullptr);
 				objectCount = 0;
 				deletedCount = 0;
+			}
+
+			size_t size() const noexcept
+			{
+				return objectCount;
+			}
+
+			bool empty() const noexcept
+			{
+				return objectCount == 0;
+			}
+
+			size_t capacity() const noexcept
+			{
+				return slots.size();
 			}
 
 		private:
@@ -117,8 +132,8 @@ namespace cppgc
 
 			static GCObjectPtr deletedSlot() noexcept
 			{
-				return reinterpret_cast<GCObjectPtr>(
-					static_cast<uintptr_t>(alignof(GCObject)));
+				static const GCObject sentinel;
+				return const_cast<GCObjectPtr>(&sentinel);
 			}
 
 			static size_t hashPointer(GCObjectPtr pointer) noexcept
@@ -236,10 +251,7 @@ namespace cppgc
 			{
 				GCObjectPtr ptr = object.pointer;
 				if (ptr)
-				{
-					ptr->collectorIdentity = nullptr;
 					delete ptr;
-				}
 			}
 		}
 
@@ -290,6 +302,8 @@ namespace cppgc
 			ensureNotPoisoned();
 			ensureNotDestroying("validate weak target");
 			GCObjectPtr target = const_cast<GCObject*>(object);
+			if (!target)
+				return false;
 			if (state == State::sweeping && sweepingDeadRegistry.contains(target))
 				return false;
 			if (!isAllocated(target))
@@ -305,16 +319,20 @@ namespace cppgc
 			ensureOwnerThread();
 			ensureIdle("allocate an object");
 
-			if (nextCollectionThreshold && allocatedBytes >= nextCollectionThreshold)
+			if (constructionDepth == 0 && nextCollectionThreshold && allocatedBytes >= nextCollectionThreshold)
 				collect();
 
 			const size_t objectSize = sizeof(T);
 			if (allocatedBytes > std::numeric_limits<size_t>::max() - objectSize)
 				throw std::length_error("managed-object memory usage is too large");
 
-			auto object = std::make_unique<T>(std::forward<Args>(args)...);
+			std::unique_ptr<T> object;
+			{
+				ConstructionScope scope(constructionDepth);
+				object = std::make_unique<T>(std::forward<Args>(args)...);
+			}
+
 			T* ptr = object.get();
-			ptr->collectorIdentity = this;
 
 			if (!allocatedRegistry.insert(ptr))
 				throw std::logic_error("duplicate managed object address");
@@ -333,7 +351,6 @@ namespace cppgc
 					allocatedBytes -= objectSize;
 				}
 				allocatedRegistry.erase(ptr);
-				ptr->collectorIdentity = nullptr;
 				throw;
 			}
 
@@ -373,18 +390,19 @@ namespace cppgc
 			{
 				size_t liveCount = 0;
 				size_t liveBytes = 0;
-				for (const auto& object : allocated)
+				for (auto& object : allocated)
 				{
 					GCObjectPtr ptr = object.pointer;
+					const size_t size = object.size;
+					object.pointer = nullptr;
 					if (ptr->markEpoch == currentEpoch)
 					{
-						allocated[liveCount++] = object;
-						liveBytes += object.size;
+						allocated[liveCount++] = { ptr, size };
+						liveBytes += size;
 					}
 					else
 					{
 						allocatedRegistry.erase(ptr);
-						ptr->collectorIdentity = nullptr;
 						delete ptr;  // Destructor callbacks observe State::sweeping.
 					}
 				}
@@ -606,6 +624,22 @@ namespace cppgc
 			size_t size;
 		};
 
+		struct [[nodiscard]] ConstructionScope
+		{
+			explicit ConstructionScope(size_t& depth) noexcept
+				: depth(depth)
+			{
+				++depth;
+			}
+
+			~ConstructionScope() noexcept
+			{
+				--depth;
+			}
+
+			size_t& depth;
+		};
+
 		size_t configuredMinimumThreshold;
 		size_t nextCollectionThreshold;
 		std::thread::id ownerThread;
@@ -615,6 +649,7 @@ namespace cppgc
 		std::unordered_set<GCObjectWeakPtrBase*> weaks;
 		std::vector<AllocatedObject> allocated;
 		size_t allocatedBytes = 0;
+		size_t constructionDepth = 0;
 		detail::PointerRegistry allocatedRegistry;
 		detail::PointerRegistry sweepingDeadRegistry;
 	};

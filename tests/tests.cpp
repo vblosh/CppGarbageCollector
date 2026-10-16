@@ -23,6 +23,15 @@ static_assert(!std::is_move_constructible_v<GCObject>);
 static_assert(!std::is_move_assignable_v<GCObject>);
 static_assert(sizeof(GCMember<Foo>) == sizeof(void*));
 static_assert(std::is_trivially_copyable_v<GCMember<Foo>>);
+static_assert(sizeof(GCObject) == 2 * sizeof(void*));
+static_assert(sizeof(GCObjectRootPtrBase) == 2 * sizeof(void*));
+static_assert(sizeof(GCObjectWeakPtrBase) == 2 * sizeof(void*));
+static_assert(!std::is_convertible_v<GCMember<Foo>, Foo*>);
+static_assert(std::is_constructible_v<Foo*, GCMember<Foo>>);
+static_assert(!std::is_destructible_v<GCObjectRootPtrBase>);
+static_assert(!std::is_destructible_v<GCObjectWeakPtrBase>);
+static_assert(std::is_destructible_v<GCObjectRootPtr<Foo>>);
+static_assert(std::is_destructible_v<GCObjectWeakPtr<Foo>>);
 
 TEST(GCTEST, testRoots1)
 {
@@ -1010,6 +1019,205 @@ TEST(GCTEST, handleExplicitOperatorBool)
 
     gc.collect();
     ASSERT_FALSE(static_cast<bool>(weak));
+}
+
+TEST(GCTEST, dereferenceOperator)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(42);
+    ASSERT_EQ(42, (*root).id);
+
+    root->pFoo = gc.createInstance<Foo>(99);
+    ASSERT_EQ(99, (*root->pFoo).id);
+}
+
+TEST(GCTEST, acceptsWeakTargetNullptrReturnsFalse)
+{
+    GarbageCollector gc;
+    ASSERT_FALSE(gc.acceptsWeakTarget(nullptr));
+}
+
+TEST(GCTEST, detachedWeakPointerRejectsObjectAssignment)
+{
+    GarbageCollector foreignGc;
+    Foo* obj = foreignGc.createInstance<Foo>(1);
+
+    auto gc = std::make_unique<GarbageCollector>();
+    GCObjectWeakPtr<Foo> weak(*gc);
+    gc.reset();
+
+    ASSERT_THROW(weak = obj, std::invalid_argument);
+    ASSERT_NO_THROW(weak = nullptr);
+}
+
+TEST(GCTEST, forwardDeclaredTypeWithGCMember)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<IncompleteMemberContainer> container(gc);
+    container = gc.createInstance<IncompleteMemberContainer>();
+    ASSERT_EQ(nullptr, container->target.get());
+
+    container->target = gc.createInstance<IncompleteTargetClass>(77);
+    ASSERT_EQ(77, container->target->value);
+    gc.collect();
+    ASSERT_EQ(77, container->target->value);
+    ASSERT_EQ(2, gc.get_objects_count());
+}
+
+TEST(GCTEST, nestedCreateInstanceDefersThresholdCollection)
+{
+    GarbageCollector gc;
+    const size_t childSize = sizeof(NestedChild);
+    gc.set_collection_threshold(childSize);
+
+    GCObjectRootPtr<NestedAllocatingParent> parent(gc);
+    ASSERT_NO_THROW(parent = gc.createInstance<NestedAllocatingParent>(gc));
+    ASSERT_NE(nullptr, parent->child1.get());
+    ASSERT_NE(nullptr, parent->child2.get());
+    ASSERT_EQ(1, parent->child1->id);
+    ASSERT_EQ(2, parent->child2->id);
+    ASSERT_EQ(3, gc.get_objects_count());
+
+    gc.collect();
+    ASSERT_EQ(3, gc.get_objects_count());
+}
+
+TEST(GCTEST, gcMemberDereferenceOperator)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root(gc);
+    root = gc.createInstance<Foo>(1);
+    root->pFoo = gc.createInstance<Foo>(2);
+
+    // Test mutable reference via operator*
+    Foo& childRef = *root->pFoo;
+    ASSERT_EQ(2, childRef.id);
+    childRef.id = 42;
+    ASSERT_EQ(42, root->pFoo->id);
+
+    // Test const member dereference
+    const GCMember<Foo>& constMember = root->pFoo;
+    const Foo& constChildRef = *constMember;
+    ASSERT_EQ(42, constChildRef.id);
+}
+
+TEST(GCTEST, pointerRegistryClearPreservesCapacity)
+{
+    detail::PointerRegistry registry;
+    ASSERT_EQ(0, registry.capacity());
+    ASSERT_EQ(0, registry.size());
+    ASSERT_TRUE(registry.empty());
+
+    std::vector<GCObject> objects(32);
+    for (auto& object : objects)
+        ASSERT_TRUE(registry.insert(&object));
+
+    const size_t capBeforeClear = registry.capacity();
+    ASSERT_GT(capBeforeClear, 0);
+    ASSERT_EQ(32, registry.size());
+    ASSERT_FALSE(registry.empty());
+
+    registry.clear();
+
+    ASSERT_EQ(0, registry.size());
+    ASSERT_TRUE(registry.empty());
+    // Verify capacity was preserved and not reallocated down to 0 or initialCapacity
+    ASSERT_EQ(capBeforeClear, registry.capacity());
+
+    // Verify subsequent inserts reuse capacity
+    for (auto& object : objects)
+        ASSERT_TRUE(registry.insert(&object));
+
+    ASSERT_EQ(capBeforeClear, registry.capacity());
+    ASSERT_EQ(32, registry.size());
+}
+
+TEST(GCTEST, wrongThreadDestructionDoesNotTerminate)
+{
+    GarbageCollector gc;
+    auto* obj = gc.createInstance<Foo>(1);
+
+    alignas(GCObjectRootPtr<Foo>) char rootStorage[sizeof(GCObjectRootPtr<Foo>)];
+    auto* root = new (rootStorage) GCObjectRootPtr<Foo>(gc);
+    *root = obj;
+
+    alignas(GCObjectWeakPtr<Foo>) char weakStorage[sizeof(GCObjectWeakPtr<Foo>)];
+    auto* weak = new (weakStorage) GCObjectWeakPtr<Foo>(gc);
+    *weak = obj;
+
+    std::thread worker([&]
+    {
+        // Calling destructors on non-owner thread must not std::terminate()
+        root->~GCObjectRootPtr<Foo>();
+        weak->~GCObjectWeakPtr<Foo>();
+    });
+    worker.join();
+
+    // Remove from collector on owner thread to clean up
+    gc.removeRoot(root);
+    gc.removeWeak(weak);
+}
+
+TEST(GCTEST, handleComparisonOperators)
+{
+    GarbageCollector gc;
+    GCObjectRootPtr<Foo> root1(gc);
+    GCObjectRootPtr<Foo> root2(gc);
+    GCObjectWeakPtr<Foo> weak1(gc);
+    GCObjectWeakPtr<Foo> weak2(gc);
+
+    // Null comparisons
+    ASSERT_TRUE(root1 == nullptr);
+    ASSERT_TRUE(nullptr == root1);
+    ASSERT_FALSE(root1 != nullptr);
+    ASSERT_FALSE(nullptr != root1);
+    ASSERT_TRUE(weak1 == nullptr);
+    ASSERT_TRUE(nullptr == weak1);
+    ASSERT_FALSE(weak1 != nullptr);
+    ASSERT_FALSE(nullptr != weak1);
+
+    // Comparing empty handles
+    ASSERT_TRUE(root1 == root2);
+    ASSERT_FALSE(root1 != root2);
+    ASSERT_TRUE(weak1 == weak2);
+    ASSERT_FALSE(weak1 != weak2);
+    ASSERT_TRUE(root1 == weak1);
+    ASSERT_TRUE(weak1 == root1);
+
+    Foo* obj1 = gc.createInstance<Foo>(10);
+    Foo* obj2 = gc.createInstance<Foo>(20);
+    root1 = obj1;
+    root2 = obj2;
+    weak1 = root1;
+    weak2 = root2;
+
+    ASSERT_TRUE(root1 == obj1);
+    ASSERT_TRUE(obj1 == root1);
+    ASSERT_TRUE(root1 != obj2);
+    ASSERT_TRUE(obj2 != root1);
+    ASSERT_TRUE(root1 != root2);
+    ASSERT_FALSE(root1 == root2);
+
+    ASSERT_TRUE(weak1 == obj1);
+    ASSERT_TRUE(obj1 == weak1);
+    ASSERT_TRUE(weak1 != obj2);
+    ASSERT_TRUE(weak1 != weak2);
+    ASSERT_FALSE(weak1 == weak2);
+
+    ASSERT_TRUE(root1 == weak1);
+    ASSERT_TRUE(weak1 == root1);
+    ASSERT_TRUE(root1 != weak2);
+    ASSERT_TRUE(weak2 != root1);
+
+    root1->pFoo = obj2;
+    ASSERT_TRUE(root1->pFoo == obj2);
+    ASSERT_TRUE(obj2 == root1->pFoo);
+    ASSERT_TRUE(root1->pFoo != obj1);
+    ASSERT_TRUE(root1->pFoo == root2);
+    ASSERT_TRUE(root1->pFoo == weak2);
+    ASSERT_FALSE(root1->pFoo == nullptr);
+    ASSERT_TRUE(root1->pFoo != nullptr);
 }
 
 int main(int argc, char** argv) 
